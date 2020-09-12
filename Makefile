@@ -1,22 +1,24 @@
-CFLAGS += -std=c99 -D_POSIX_C_SOURCE=199309L -O3 -g -Wall -Wextra -Werror -Wno-type-limits
+CFLAGS += -c -std=c99 -D_POSIX_C_SOURCE=199309L -O3 -g -Wall -Wextra -Werror -Wno-type-limits
 TIMEOUT ?= 10
 
-INSTALL_DIR := /opt/interception
+INSTALL_FILE := /opt/interception/interception-pipe-maricn-remap
 
-.PHONY: all
-all: $(TARGETS)
+# the build target executable:
+TARGET = remap
 
-remap: remap.c 
-	$(CC) $(CFLAGS) $< -o interception-pipe-maricn-remap
+all: $(TARGET)
+
+$(TARGET): $(TARGET).c
+	$(CC) $(CFLAGS) -o $(TARGET) $(TARGET).c
 
 .PHONY: clean
 clean:
-	rm -f interception-pipe-maricn-remap
+	rm -f $(TARGET)
 
 .PHONY: install
 install:
 	# If you have run `make test` then do not forget to run `make clean` after. Otherwise you may install with debug logs on.
-	install -D --strip -t $(INSTALL_DIR) interception-pipe-maricn-remap
+	install -D --strip -T $(INSTALL_FILE) $(TARGET)
 
 .PHONY: test
 test:
