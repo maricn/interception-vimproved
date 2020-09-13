@@ -49,11 +49,22 @@ static int key_ismod(int code) {
 }
 */
 void map_space_init() {
+  // special chars
+  map_space[KEY_E] = KEY_ESC;
+  map_space[KEY_D] = KEY_DELETE;
+  map_space[KEY_B] = KEY_BACKSPACE;
+
   // vim home row
   map_space[KEY_H] = KEY_LEFT;
   map_space[KEY_J] = KEY_DOWN;
   map_space[KEY_K] = KEY_UP;
   map_space[KEY_L] = KEY_RIGHT;
+
+  // vim above home row
+  map_space[KEY_Y] = KEY_HOME;
+  map_space[KEY_U] = KEY_PAGEDOWN;
+  map_space[KEY_I] = KEY_PAGEUP;
+  map_space[KEY_P] = KEY_END;
 
   // number row to F keys
   map_space[KEY_1] = KEY_F1;
