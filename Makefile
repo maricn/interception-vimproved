@@ -1,4 +1,4 @@
-CFLAGS += -c -std=c99 -D_POSIX_C_SOURCE=199309L -O3 -g -Wall -Wextra -Werror -Wno-type-limits
+CFLAGS += -std=c99 -D_POSIX_C_SOURCE=199309L -O3 -g -Wall -Wextra -Werror -Wno-type-limits
 TIMEOUT ?= 10
 
 INSTALL_FILE := /opt/interception/interception-pipe-maricn-remap
@@ -13,7 +13,7 @@ $(TARGET): $(TARGET).c
 
 .PHONY: clean
 clean:
-	rm -f $(TARGET)
+	rm -f $(TARGET) $(TARGET).o
 
 .PHONY: install
 install:
