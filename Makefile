@@ -1,4 +1,4 @@
-CFLAGS += -std=c99 -D_POSIX_C_SOURCE=199309L -O3 -g -Wall -Wextra -Werror -Wno-type-limits
+CXXFLAGS += -std=c++20 -D_POSIX_C_SOURCE=199309L -O3 -g -Wall -Wextra -Werror -Wno-type-limits
 TIMEOUT ?= 10
 
 INSTALL_FILE := /opt/interception/interception-pipe-maricn-remap
@@ -8,8 +8,8 @@ TARGET = remap
 
 all: $(TARGET)
 
-$(TARGET): $(TARGET).c
-	$(CC) $(CFLAGS) -o $(TARGET) $(TARGET).c
+$(TARGET): $(TARGET).cpp
+	$(CXX) $(CXXFLAGS) -o $(TARGET) $(TARGET).cpp
 
 .PHONY: clean
 clean:
@@ -22,6 +22,6 @@ install:
 
 .PHONY: test
 test:
-	CFLAGS=-DVERBOSE make
+	CXXFLAGS=-DVERBOSE make
 	make install
 	timeout $(TIMEOUT) udevmon -c /etc/udevmon.yaml
