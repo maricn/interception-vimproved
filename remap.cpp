@@ -3,51 +3,31 @@
 
 #include <linux/input.h>
 #include <set>
-#include <time.h>
 #include <unistd.h>
 #include <vector>
+
+using namespace std;
 
 /**
  * Global constants
  **/
 #define MS_TO_NS 1000000L // 1 millisecond = 1,000,000 Nanoseconds
+
+typedef struct input_event event;
+
 const int KEY_STROKE_UP = 0, KEY_STROKE_DOWN = 1, KEY_STROKE_REPEAT = 2;
 const int INPUT_BUFFER_SIZE = 16;
 const long SLEEP_INTERVAL_NS = 20 * MS_TO_NS;
 const int input_event_struct_size = sizeof(struct input_event);
 
-int map_space[KEY_MAX];
-
 // clang-format off
 const struct input_event
-_space_up        = {.time = { .tv_sec = 0, .tv_usec = 0}, .type = EV_KEY, .code = KEY_SPACE,    .value = KEY_STROKE_UP},
-_space_down      = {.time = { .tv_sec = 0, .tv_usec = 0}, .type = EV_KEY, .code = KEY_SPACE,    .value = KEY_STROKE_DOWN},
-_space_repeat    = {.time = { .tv_sec = 0, .tv_usec = 0}, .type = EV_KEY, .code = KEY_SPACE,    .value = KEY_STROKE_REPEAT},
-_syn             = {.time = { .tv_sec = 0, .tv_usec = 0}, .type = EV_SYN, .code = SYN_REPORT,   .value = KEY_STROKE_UP};
+_syn             = {.time = { .tv_sec = 0, .tv_usec = 0}, .type = EV_SYN, .code = SYN_REPORT, .value = KEY_STROKE_UP};
 const struct input_event
-*space_up     = &_space_up,
-*space_down   = &_space_down,
-*space_repeat = &_space_repeat,
 *syn          = &_syn;
 // clang-format on
 
-/*
-static int key_ismod(int code) {
-  switch (code) {
-  default:
-    return 0;
-  case KEY_LEFTSHIFT:
-  case KEY_RIGHTSHIFT:
-  case KEY_LEFTCTRL:
-  case KEY_RIGHTCTRL:
-  case KEY_LEFTALT:
-  case KEY_RIGHTALT:
-  case KEY_LEFTMETA:
-  case KEY_RIGHTMETA:
-    return 1;
-  }
-}
-*/
+unsigned short map_space[KEY_MAX];
 void map_space_init() {
   // special chars
   map_space[KEY_E] = KEY_ESC;
@@ -86,44 +66,59 @@ void map_space_init() {
   map_space[KEY_DOT] = KEY_VOLUMEUP;
 }
 
-int equal(const struct input_event *first, const struct input_event *second) {
-  return first->type == second->type && first->code == second->code &&
-         first->value == second->value;
+int read_event(event *e) {
+  return fread(e, input_event_struct_size, 1, stdin) == 1;
 }
 
-auto cmp = [](const struct input_event *e1, const struct input_event *e2) {
-  return equal(e1, e2) != 0;
-};
-
-int read_event(struct input_event *event) {
-  return fread(event, input_event_struct_size, 1, stdin) == 1;
-}
-
-void write_event(const struct input_event *event) {
-  if (fwrite(event, input_event_struct_size, 1, stdout) != 1)
+void write_event(event *e) {
+  if (fwrite(e, input_event_struct_size, 1, stdout) != 1)
     exit(EXIT_FAILURE);
 }
 
-void write_events(std::vector<struct input_event> *events) {
+void write_events(vector<input_event> *events) {
   const unsigned long size = events->size();
   if (fwrite(events->data(), input_event_struct_size, size, stdout) != size)
     exit(EXIT_FAILURE);
 }
 
-struct input_event *map(const struct input_event *input, int direction = -1) {
-  struct input_event *result = new input_event(*input);
-  result->code = map_space[input->code];
+void write_combo(unsigned short keycode) {
+  input_event key_down = {.time = {.tv_sec = 0, .tv_usec = 0},
+                          .type = EV_KEY,
+                          .code = keycode,
+                          .value = KEY_STROKE_DOWN};
+  input_event key_up = {.time = {.tv_sec = 0, .tv_usec = 0},
+                        .type = EV_KEY,
+                        .code = keycode,
+                        .value = KEY_STROKE_UP};
+
+  vector<input_event> *combo = new vector<input_event>();
+  combo->push_back(key_down);
+  combo->push_back(*syn);
+  combo->push_back(key_up);
+  write_events(combo);
+
+  delete combo;
+}
+
+struct input_event map(const struct input_event *input, int direction = -1) {
+  struct input_event result(*input);
+  result.code = map_space[input->code];
   if (direction != -1) {
-    result->value = direction;
+    result.value = direction;
   }
   return result;
 }
 
 int main() {
-  struct input_event *input = new input_event();
-  std::set<int> held_keys;
-  enum { START, SPACE_HELD, KEY_HELD } state = START;
-  int space_down_not_emitted = 1;
+  input_event *input = new input_event();
+  set<int> held_keys;
+  enum {
+    START,
+    MODIFIER_HELD,
+    KEY_HELD
+  } state_space = START,
+    state_caps = START;
+  bool space_not_emitted = true, caps_is_esc = true, ctrl_not_emitted = true;
 
   map_space_init();
   setbuf(stdin, NULL), setbuf(stdout, NULL);
@@ -137,47 +132,84 @@ int main() {
       continue;
     }
 
-    switch (state) {
+    switch (state_caps) {
     case START:
-      if (equal(input, space_down) || equal(input, space_repeat)) {
-        state = SPACE_HELD;
-        space_down_not_emitted = 1;
+      if (input->code == KEY_CAPSLOCK && input->value == KEY_STROKE_DOWN) {
+        caps_is_esc = true;
+        ctrl_not_emitted = true;
+        state_caps = MODIFIER_HELD;
+        continue;
+      }
+      break;
+    case MODIFIER_HELD:
+      if (input->code == KEY_CAPSLOCK && input->value != KEY_STROKE_UP)
+        break;
+      if (input->code == KEY_CAPSLOCK) {
+        if (caps_is_esc) { // and key stroke up
+          write_combo(KEY_ESC);
+        } else { // caps is ctrl and key stroke up
+          event ctrl_up(*input);
+          ctrl_up.code = KEY_LEFTCTRL;
+          write_event(&ctrl_up);
+        }
+        state_caps = START;
+        continue;
+      } else if (input->value !=
+                 KEY_STROKE_UP) { // any key != capslock goes down or repeat
+        caps_is_esc = false;
+        if (ctrl_not_emitted) {
+          event ctrl_down = {.time = {.tv_sec = 0, .tv_usec = 0},
+                             .type = EV_KEY,
+                             .code = KEY_LEFTCTRL,
+                             .value = KEY_STROKE_DOWN};
+          write_event(&ctrl_down);
+          ctrl_not_emitted = false;
+        }
+      }
+      break;
+    default:
+      break;
+    }
+
+    switch (state_space) {
+    case START:
+      if (input->code == KEY_SPACE && input->value != KEY_STROKE_UP) {
+        space_not_emitted = true;
+        state_space = MODIFIER_HELD;
       } else {
         write_event(input);
       }
       break;
-    case SPACE_HELD:
-      if (equal(input, space_down) || equal(input, space_repeat))
+    case MODIFIER_HELD:
+      if (input->code == KEY_SPACE && input->value != KEY_STROKE_UP)
         break;
       if (input->value == KEY_STROKE_DOWN) {
-        if (map_space[input->code] != 0) {
+        if (map_space[input->code] != 0) { // mapped key down
           held_keys.insert(input->code);
-          space_down_not_emitted = 0;
-          struct input_event *mapped_input = map(input);
-          write_event(mapped_input);
-          delete mapped_input;
-          state = KEY_HELD;
-        } else {
+          space_not_emitted = false;
+          event mapped = map(input);
+          write_event(&mapped);
+          state_space = KEY_HELD;
+        } else { // key stroke down any unmapped key
+          if (input->code == KEY_CAPSLOCK) {
+            space_not_emitted = false;
+          }
           write_event(input);
         }
       } else { // KEY_STROKE_REPEAT or KEY_STROKE_UP
-        if (input->code == KEY_SPACE && space_down_not_emitted) {
-          space_down_not_emitted = 0;
-          struct input_event space_down_var(*space_down);
-          std::vector<struct input_event> *combo =
-              new std::vector<struct input_event>();
-          combo->push_back(*space_down);
-          combo->push_back(*input);
-          write_events(combo);
-          delete combo;
+        if (input->code == KEY_SPACE && space_not_emitted) { // && stroke up
+          write_combo(KEY_SPACE);
+          space_not_emitted = false;
         } else {
           write_event(input);
         }
-        state = equal(input, space_up) ? START : SPACE_HELD;
+        if (input->code == KEY_SPACE && input->value == KEY_STROKE_UP) {
+          state_space = START;
+        }
       }
       break;
     case KEY_HELD:
-      if (equal(input, space_down) || equal(input, space_repeat))
+      if (input->code == KEY_SPACE && input->value != KEY_STROKE_UP)
         break;
       if (input->value == KEY_STROKE_DOWN &&
           held_keys.find(input->code) != held_keys.end()) {
@@ -185,37 +217,37 @@ int main() {
       }
 
       if (input->value == KEY_STROKE_UP) {
-        if (held_keys.find(input->code) != held_keys.end()) { // one of mapped held keys goes up
-          write_event(map(input));
+        if (held_keys.find(input->code) !=
+            held_keys.end()) { // one of mapped held keys goes up
+          struct input_event mapped = map(input);
+          write_event(&mapped);
           held_keys.erase(input->code);
           if (held_keys.empty()) {
-            state = SPACE_HELD;
+            state_space = MODIFIER_HELD;
           }
-        } else { // regular key goes up
-          if (equal(input, space_up)) {
-            std::vector<struct input_event> *held_keys_up =
-                new std::vector<struct input_event>();
+        } else { // key that was not mapped & held goes up
+          if (input->code == KEY_SPACE) {
+            vector<input_event> *held_keys_up = new vector<input_event>();
             for (auto held_key_code : held_keys) {
-              struct input_event held_key_up;
-              held_key_up.code = held_key_code;
-              held_key_up.value = KEY_STROKE_UP;
+              event held_key_up = {.time = {.tv_sec = 0, .tv_usec = 0},
+                                   .type = EV_KEY,
+                                   .code = map_space[held_key_code],
+                                   .value = KEY_STROKE_UP};
               held_keys_up->push_back(held_key_up);
             }
-            held_keys_up->push_back(*space_up);
 
             write_events(held_keys_up);
             delete held_keys_up;
             held_keys.clear();
-            state = START;
-          } else {
+            state_space = START;
+          } else { // unmapped key goes up
             write_event(input);
           }
         }
       } else { // KEY_STROKE_DOWN or KEY_STROKE_REPEAT
         if (map_space[input->code] != 0) {
           auto mapped = map(input);
-          write_event(mapped);
-          delete mapped;
+          write_event(&mapped);
           if (input->value == KEY_STROKE_DOWN) {
             held_keys.insert(input->code);
           }
