@@ -44,7 +44,7 @@ void map_space_init() {
   map_space[KEY_Y] = KEY_HOME;
   map_space[KEY_U] = KEY_PAGEDOWN;
   map_space[KEY_I] = KEY_PAGEUP;
-  map_space[KEY_P] = KEY_END;
+  map_space[KEY_O] = KEY_END;
 
   // number row to F keys
   map_space[KEY_1] = KEY_F1;
