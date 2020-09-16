@@ -4,7 +4,7 @@ TIMEOUT ?= 10
 INSTALL_FILE := /opt/interception/interception-vimproved
 
 # the build target executable:
-TARGET = remap
+TARGET = interception-vimproved
 
 all: $(TARGET)
 

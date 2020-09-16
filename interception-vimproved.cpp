@@ -156,6 +156,8 @@ int main() {
         continue;
       } else if (input->value !=
                  KEY_STROKE_UP) { // any key != capslock goes down or repeat
+        // TODO: find a way to have a mouse click mark caps as ctrl
+        // or just make it time based
         caps_is_esc = false;
         if (ctrl_not_emitted) {
           event ctrl_down = {.time = {.tv_sec = 0, .tv_usec = 0},
