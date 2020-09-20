@@ -9,6 +9,90 @@
 using namespace std;
 
 /**
+ * Only very rare keys are above 248, not found on most of keyboards, probably
+ * you don't need to mimic them. Check them at:
+ * https://github.com/torvalds/linux/blob/master/include/uapi/linux/input-event-codes.h
+ **/
+const unsigned short MAX_KEY = 248;
+
+/***************************************************************
+ *********************** Global classes ************************
+ **************************************************************/
+
+/**
+ * Intercepted key specification
+ **/
+class InterceptedKey {
+public:
+  enum State { START, MODIFIER_HELD, KEY_HELD };
+
+  InterceptedKey(unsigned short intercepted, unsigned short tapped) {
+    this->_intercepted = intercepted;
+    this->_tapped = tapped;
+  }
+
+  unsigned short getIntercepted() { return this->_intercepted; }
+
+  unsigned short getTapped() { return this->_tapped; }
+
+  bool matches(unsigned short code) { return this->_intercepted == code; }
+
+  State getState() { return this->_state; }
+
+private:
+  unsigned short _intercepted;
+  unsigned short _tapped = KEY_0;
+  State _state;
+};
+
+class InterceptedKeyLayer : public InterceptedKey {
+private:
+  unsigned short *_map;
+
+public:
+  InterceptedKeyLayer(unsigned short intercepted, unsigned short tapped)
+      : InterceptedKey(intercepted, tapped) {
+    this->_map = new unsigned short[MAX_KEY]{0};
+  }
+
+  ~InterceptedKeyLayer() { delete this->_map; }
+
+  InterceptedKey *addMapping(unsigned short from, unsigned short to) {
+    this->_map[from] = to;
+    return this;
+  }
+};
+
+class InterceptedKeyModifier : public InterceptedKey {
+private:
+  unsigned short _modifier;
+
+public:
+  static int isModifier(int key) {
+    switch (key) {
+    default:
+      return 0;
+    // clang-format off
+    case KEY_LEFTSHIFT: case KEY_RIGHTSHIFT:
+    case KEY_LEFTCTRL: case KEY_RIGHTCTRL:
+    case KEY_LEFTALT: case KEY_RIGHTALT:
+    case KEY_LEFTMETA: case KEY_RIGHTMETA:
+    // clang-format on
+    // @TODO: handle capslock as not modifier?
+    case KEY_CAPSLOCK:
+      return 1;
+    }
+  }
+  InterceptedKeyModifier(unsigned short intercepted, unsigned short tapped,
+                         unsigned short modifier)
+      : InterceptedKey(intercepted, tapped) {
+    if (!isModifier(modifier))
+      throw invalid_argument("Specified wrong modifier key");
+    this->_modifier = modifier;
+  }
+};
+
+/**
  * Global constants
  **/
 #define MS_TO_NS 1000000L // 1 millisecond = 1,000,000 Nanoseconds
@@ -27,8 +111,13 @@ const struct input_event
 *syn          = &_syn;
 // clang-format on
 
-unsigned short map_space[KEY_MAX];
-void map_space_init() {
+unsigned short map_space[MAX_KEY];
+vector<InterceptedKey *> *map_space_init() {
+  InterceptedKeyLayer *space = new InterceptedKeyLayer(KEY_SPACE, KEY_SPACE);
+  space->addMapping(KEY_E, KEY_ESC);
+  space->addMapping(KEY_D, KEY_DELETE);
+  space->addMapping(KEY_B, KEY_BACKSPACE);
+
   // special chars
   map_space[KEY_E] = KEY_ESC;
   map_space[KEY_D] = KEY_DELETE;
@@ -64,6 +153,14 @@ void map_space_init() {
   map_space[KEY_M] = KEY_MUTE;
   map_space[KEY_COMMA] = KEY_VOLUMEDOWN;
   map_space[KEY_DOT] = KEY_VOLUMEUP;
+
+  vector<InterceptedKey *> *interceptedKeys = new vector<InterceptedKey *>();
+  interceptedKeys->push_back(space);
+  InterceptedKeyModifier *caps =
+      new InterceptedKeyModifier(KEY_CAPSLOCK, KEY_ESC, KEY_LEFTCTRL);
+  interceptedKeys->push_back(caps);
+
+  return interceptedKeys;
 }
 
 int read_event(event *e) {
@@ -112,15 +209,10 @@ struct input_event map(const struct input_event *input, int direction = -1) {
 int main() {
   input_event *input = new input_event();
   set<int> held_keys;
-  enum {
-    START,
-    MODIFIER_HELD,
-    KEY_HELD
-  } state_space = START,
-    state_caps = START;
   bool space_tapped_should_emit = true, caps_tapped_should_emit = true;
+  InterceptedKey::State state_caps = InterceptedKey::START, state_space = InterceptedKey::START;
 
-  map_space_init();
+  auto interceptedKeys = map_space_init();
   setbuf(stdin, NULL), setbuf(stdout, NULL);
 
   while (read_event(input)) {
@@ -132,17 +224,31 @@ int main() {
       continue;
     }
 
+    for (auto key : *interceptedKeys) {
+      cerr << "intercepted key " << input->code
+           << (input->value == KEY_STROKE_DOWN
+                   ? " DOWN "
+                   : (input->value == KEY_STROKE_REPEAT ? " REPEAT " : " UP "))
+           << key->getIntercepted() << endl;
+
+      switch (key->getState()) {
+        case InterceptedKey::START: break;
+        case InterceptedKey::MODIFIER_HELD: break;
+        case InterceptedKey::KEY_HELD: break;
+      }
+    }
+
     // @TODO: handle return as RCTRL
 
     switch (state_caps) {
-    case START:
+    case InterceptedKey::START:
       if (input->code == KEY_CAPSLOCK && input->value == KEY_STROKE_DOWN) {
         caps_tapped_should_emit = true;
-        state_caps = MODIFIER_HELD;
+        state_caps = InterceptedKey::MODIFIER_HELD;
         continue;
       }
       break;
-    case MODIFIER_HELD:
+    case InterceptedKey::MODIFIER_HELD:
       if (input->code == KEY_CAPSLOCK && input->value != KEY_STROKE_UP)
         continue;
 
@@ -155,20 +261,29 @@ int main() {
           ctrl_up.code = KEY_LEFTCTRL;
           write_event(&ctrl_up);
         }
-        state_caps = START;
+        state_caps = InterceptedKey::START;
         continue;
       }
 
       if (input->value == KEY_STROKE_DOWN) { // any key != capslock goes down
+        const bool key_is_layered = false;   // for CAPSLOCK
         // TODO: find a way to have a mouse click mark caps as ctrl
         // or just make it time based
-        if (caps_tapped_should_emit) {
+        if (!key_is_layered && caps_tapped_should_emit) {
           event ctrl_down = {.time = {.tv_sec = 0, .tv_usec = 0},
                              .type = EV_KEY,
                              .code = KEY_LEFTCTRL,
                              .value = KEY_STROKE_DOWN};
           write_event(&ctrl_down);
-          caps_tapped_should_emit = false;
+        }
+
+        caps_tapped_should_emit &=
+            key_is_layered &&
+            (map_space[input->code] == 0 && input->code != KEY_CAPSLOCK &&
+             InterceptedKeyModifier::isModifier(input->code));
+
+        if (key_is_layered && map_space[input->code] != 0) {
+          // add to held keys and emit the mapped key
         }
       }
 
@@ -179,16 +294,16 @@ int main() {
     }
 
     switch (state_space) {
-    case START:
+    case InterceptedKey::START:
       if (input->code == KEY_SPACE && input->value != KEY_STROKE_UP) {
         space_tapped_should_emit = true;
-        state_space = MODIFIER_HELD;
+        state_space = InterceptedKey::MODIFIER_HELD;
         continue;
       } else {
         write_event(input);
       }
       break;
-    case MODIFIER_HELD:
+    case InterceptedKey::MODIFIER_HELD:
       if (input->code == KEY_SPACE && input->value != KEY_STROKE_UP)
         continue;
 
@@ -197,35 +312,44 @@ int main() {
           write_combo(KEY_SPACE);
           space_tapped_should_emit = false;
         } // else if modifier key => emit modifier down
-        state_space = START;
+        state_space = InterceptedKey::START;
         continue;
       }
 
       if (input->value == KEY_STROKE_DOWN) {
-        if (map_space[input->code] != 0) { // mapped key down
+        const bool key_is_layered = true; // for SPACE
+        if (!key_is_layered && space_tapped_should_emit) {
+          // write event for modifier key down
+        }
+
+        space_tapped_should_emit &=
+            key_is_layered &&
+            (map_space[input->code] == 0 && input->code != KEY_CAPSLOCK &&
+             InterceptedKeyModifier::isModifier(input->code));
+
+        if (key_is_layered && map_space[input->code] != 0) { // mapped key down
           held_keys.insert(input->code);
-          space_tapped_should_emit = false;
           event mapped = map(input);
           write_event(&mapped);
-          state_space = KEY_HELD;
-        } else { // key stroke down any unmapped key
-          if (input->code == KEY_CAPSLOCK) {
-            space_tapped_should_emit = false;
-          }
+          state_space = InterceptedKey::KEY_HELD;
+        }
+
+        else { // key stroke down any unmapped key
           write_event(input);
         }
-      } 
+      }
 
-      else { // any key (unmapped and not space) KEY_STROKE_REPEAT or KEY_STROKE_UP
-          write_event(input);
+      else { // any key (unmapped and not space) KEY_STROKE_REPEAT or
+             // KEY_STROKE_UP
+        write_event(input);
       }
       break;
-    case KEY_HELD:
+    case InterceptedKey::KEY_HELD:
       if (input->code == KEY_SPACE && input->value != KEY_STROKE_UP)
-        break;
+        continue;
       if (input->value == KEY_STROKE_DOWN &&
           held_keys.find(input->code) != held_keys.end()) {
-        break;
+        continue;
       }
 
       if (input->value == KEY_STROKE_UP) {
@@ -235,7 +359,7 @@ int main() {
           write_event(&mapped);
           held_keys.erase(input->code);
           if (held_keys.empty()) {
-            state_space = MODIFIER_HELD;
+            state_space = InterceptedKey::MODIFIER_HELD;
           }
         } else { // key that was not mapped & held goes up
           if (input->code == KEY_SPACE) {
@@ -251,7 +375,7 @@ int main() {
             write_events(held_keys_up);
             delete held_keys_up;
             held_keys.clear();
-            state_space = START;
+            state_space = InterceptedKey::START;
           } else { // unmapped key goes up
             write_event(input);
           }
@@ -272,4 +396,5 @@ int main() {
   }
 
   free(input);
+  delete interceptedKeys;
 }
