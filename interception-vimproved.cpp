@@ -118,7 +118,7 @@ int main() {
     KEY_HELD
   } state_space = START,
     state_caps = START;
-  bool space_not_emitted = true, caps_is_esc = true, ctrl_not_emitted = true;
+  bool space_tapped_should_emit = true, caps_tapped_should_emit = true;
 
   map_space_init();
   setbuf(stdin, NULL), setbuf(stdout, NULL);
@@ -132,21 +132,24 @@ int main() {
       continue;
     }
 
+    // @TODO: handle return as RCTRL
+
     switch (state_caps) {
     case START:
       if (input->code == KEY_CAPSLOCK && input->value == KEY_STROKE_DOWN) {
-        caps_is_esc = true;
-        ctrl_not_emitted = true;
+        caps_tapped_should_emit = true;
         state_caps = MODIFIER_HELD;
         continue;
       }
       break;
     case MODIFIER_HELD:
       if (input->code == KEY_CAPSLOCK && input->value != KEY_STROKE_UP)
-        break;
+        continue;
+
       if (input->code == KEY_CAPSLOCK) {
-        if (caps_is_esc) { // and key stroke up
+        if (caps_tapped_should_emit) { // and key stroke up
           write_combo(KEY_ESC);
+          caps_tapped_should_emit = false;
         } else { // caps is ctrl and key stroke up
           event ctrl_up(*input);
           ctrl_up.code = KEY_LEFTCTRL;
@@ -154,20 +157,22 @@ int main() {
         }
         state_caps = START;
         continue;
-      } else if (input->value !=
-                 KEY_STROKE_UP) { // any key != capslock goes down or repeat
+      }
+
+      if (input->value == KEY_STROKE_DOWN) { // any key != capslock goes down
         // TODO: find a way to have a mouse click mark caps as ctrl
         // or just make it time based
-        caps_is_esc = false;
-        if (ctrl_not_emitted) {
+        if (caps_tapped_should_emit) {
           event ctrl_down = {.time = {.tv_sec = 0, .tv_usec = 0},
                              .type = EV_KEY,
                              .code = KEY_LEFTCTRL,
                              .value = KEY_STROKE_DOWN};
           write_event(&ctrl_down);
-          ctrl_not_emitted = false;
+          caps_tapped_should_emit = false;
         }
       }
+
+      // go on to the next key and eventually write_event(input)
       break;
     default:
       break;
@@ -176,38 +181,43 @@ int main() {
     switch (state_space) {
     case START:
       if (input->code == KEY_SPACE && input->value != KEY_STROKE_UP) {
-        space_not_emitted = true;
+        space_tapped_should_emit = true;
         state_space = MODIFIER_HELD;
+        continue;
       } else {
         write_event(input);
       }
       break;
     case MODIFIER_HELD:
       if (input->code == KEY_SPACE && input->value != KEY_STROKE_UP)
-        break;
+        continue;
+
+      if (input->code == KEY_SPACE) { // && stroke up
+        if (space_tapped_should_emit) {
+          write_combo(KEY_SPACE);
+          space_tapped_should_emit = false;
+        } // else if modifier key => emit modifier down
+        state_space = START;
+        continue;
+      }
+
       if (input->value == KEY_STROKE_DOWN) {
         if (map_space[input->code] != 0) { // mapped key down
           held_keys.insert(input->code);
-          space_not_emitted = false;
+          space_tapped_should_emit = false;
           event mapped = map(input);
           write_event(&mapped);
           state_space = KEY_HELD;
         } else { // key stroke down any unmapped key
           if (input->code == KEY_CAPSLOCK) {
-            space_not_emitted = false;
+            space_tapped_should_emit = false;
           }
           write_event(input);
         }
-      } else { // KEY_STROKE_REPEAT or KEY_STROKE_UP
-        if (input->code == KEY_SPACE && space_not_emitted) { // && stroke up
-          write_combo(KEY_SPACE);
-          space_not_emitted = false;
-        } else {
+      } 
+
+      else { // any key (unmapped and not space) KEY_STROKE_REPEAT or KEY_STROKE_UP
           write_event(input);
-        }
-        if (input->code == KEY_SPACE && input->value == KEY_STROKE_UP) {
-          state_space = START;
-        }
       }
       break;
     case KEY_HELD:
