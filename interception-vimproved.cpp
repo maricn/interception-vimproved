@@ -15,11 +15,12 @@ const int KEY_STROKE_UP = 0, KEY_STROKE_DOWN = 1, KEY_STROKE_REPEAT = 2;
 const int input_event_struct_size = sizeof(struct input_event);
 
 /**
- * Only very rare keys are above 248, not found on most of keyboards, probably
- * you don't need to mimic them. Check them at:
+ * Only very rare keys are above 0x151, not found on most of keyboards, probably
+ * you don't need to mimic them. We cover above 0x100 which includes mouse BTNs.
+ * Check what else is there at:
  * https://github.com/torvalds/linux/blob/master/include/uapi/linux/input-event-codes.h
  **/
-const unsigned short MAX_KEY = 248;
+const unsigned short MAX_KEY = 0x151;
 
 typedef struct input_event event;
 
@@ -149,8 +150,14 @@ protected:
     if (this->matches(input->code) && input->value != KEY_STROKE_UP) {
       return false;
     }
+      
+    /* cerr << input->type << "," << input->code << "@" << input->value << " "; */
 
     if (this->matches(input->code)) { // && stroke up
+      // TODO: find a way to have a mouse click mark the key as intercepted
+      // or just make it time based
+      // this->_shouldEmitTapped &= mouse clicked || timeout;
+
       if (this->_shouldEmitTapped) {
         writeCombo(this->_tapped);
         this->_shouldEmitTapped = false;
@@ -162,6 +169,10 @@ protected:
 
     if (input->value == KEY_STROKE_DOWN) {
 
+      // @NOTE: if we don't blindly set _shouldEmitTapped to false on any
+      // keypress, we can type faster because only in case of mapped key down,
+      // the intercepted key will not be emitted - useful for scenario:
+      // L_DOWN, SPACE_DOWN, A_DOWN, L_UP, A_UP, SPACE_UP
       this->_shouldEmitTapped &= !this->hasMapped(input->code) &&
                                  !InterceptedKey::isModifier(input->code);
 
@@ -169,6 +180,7 @@ protected:
         this->_heldKeys->insert(input->code);
         event mapped = this->map(input);
         writeEvent(&mapped);
+        /* cerr << "e:" << mapped.type << "," << mapped.code << " "; cerr.flush(); */ 
         this->_state = InterceptedKey::OTHER_KEY_HELD;
         return false;
       }
@@ -334,6 +346,14 @@ vector<InterceptedKey *> *initInterceptedKeys() {
   space->addMapping(KEY_COMMA, KEY_VOLUMEDOWN);
   space->addMapping(KEY_DOT, KEY_VOLUMEUP);
 
+  // mouse navigation
+  space->addMapping(BTN_LEFT, BTN_BACK);
+  space->addMapping(BTN_RIGHT, BTN_FORWARD);
+
+  // @FIXME: this is not working, even though `wev` says keycode 99 is Print
+  // PrtSc -> Context Menu
+  space->addMapping(KEY_SYSRQ, KEY_CONTEXT_MENU);
+
   // tap caps for esc, hold for ctrl
   InterceptedKeyModifier *caps =
       new InterceptedKeyModifier(KEY_CAPSLOCK, KEY_ESC, KEY_LEFTCTRL);
@@ -367,6 +387,8 @@ int main() {
       writeEvent(input);
       continue;
     }
+
+    /* cerr << input->type << "," << input->code << " "; */
 
     bool shouldEmitInput = true;
     for (auto key : *interceptedKeys) {
