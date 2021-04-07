@@ -15,10 +15,14 @@ $(TARGET): $(TARGET).cpp
 clean:
 	rm -f $(TARGET) $(TARGET).o
 
+.PHONY: build
+build:
+	g++ -o interception-vimproved interception-vimproved.cpp
+
 .PHONY: install
 install:
 	# If you have run `make test` then do not forget to run `make clean` after. Otherwise you may install with debug logs on.
-	install -D --strip -T $(INSTALL_FILE) $(TARGET)
+	install -D --strip -T $(TARGET) $(INSTALL_FILE)
 
 .PHONY: test
 test:
