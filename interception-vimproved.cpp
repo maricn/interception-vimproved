@@ -182,7 +182,7 @@ protected:
       return false;
     }
 
-    if (input->value == KEY_STROKE_DOWN) {
+    if (input->value == KEY_STROKE_DOWN) { // any other key
 
       // @NOTE: if we don't blindly set _shouldEmitTapped to false on any
       // keypress, we can type faster because only in case of mapped key down,
@@ -299,16 +299,15 @@ protected:
         Event *modifier_down = new Event(*input);
         modifier_down->code = this->_modifier;
 
-        // for some reason writing them together works better than individually
+        // for some reason, need to push "syn" after modifier here
         vector<Event> *modifier_and_input = new vector<Event>();
         modifier_and_input->push_back(*modifier_down);
         modifier_and_input->push_back(*syn);
-        modifier_and_input->push_back(Event(*input));
         writeEvents(modifier_and_input);
 
         this->_shouldEmitTapped = false;
         delete modifier_and_input;
-        return false; // don't emit input, already emitted in the "writeEvents" here
+        return true; // gotta emit input event independently so we can process layer+modifier+input together
       }
     }
 
