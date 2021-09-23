@@ -1,4 +1,4 @@
-CXXFLAGS += -std=c++20 -D_POSIX_C_SOURCE=199309L -O3 -g -Wall -Wextra -Werror -Wno-type-limits
+CXXFLAGS += -std=c++20 -D_POSIX_C_SOURCE=199309L -O3 -g -Wall -Wextra -Werror -Wno-unused-parameter -Wno-type-limits
 TIMEOUT ?= 10
 
 INSTALL_FILE := /opt/interception/interception-vimproved

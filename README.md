@@ -4,97 +4,37 @@ My hideous (but working and performant) C++ code to remap the keys on any input 
 
 ## tl;dr;
 
-* space cadet: Maps space into modifier key when held for long that transforms hjkl (vim homerow) into arrows, number row into F-keys and a bit more. Space still emits SPACE key when tapped without holding.
-* caps2esc: Makes CAPS key send ESC when tapped and CTRL when held.
+* space cadet: Maps space key into modifier (layer) key when held for long that transforms hjkl (vim homerow) into arrows, number row into F-keys, and a bit more. Space still emits SPACE key when tapped without holding.
+* caps2esc: Makes CAPS key send ESC when tapped and L_CTRL when held.
+* return2ctrl: Makes RETURN key send RETURN when tapped and R_CTRL when held.
 
 ## Requirements
-Basically any OS that works with `libevdev` (linux with kernel newer than 2.6.36), no matter what desktop environment, or even if any DE is used (yes, it works the same in X server instead of `xmodmap`, but also in plain terminal, without graphical environment).
+Basically any OS that works with `libevdev` (linux with kernel newer than 2.6.36), no matter what desktop environment, or even if any DE is used (yes, it works the same in X server instead of `xmodmap`, but also in plain terminal without graphical environment).
 
 ## Running
 Use it with a job specification for `udevmon` (from [Interception Tools](https://gitlab.com/interception/linux/tools)). I install the binary to `/opt/interception/interception-vimproved` and use it like the following on Arch linux on Thinkpad x1c gen7.
 
 ```yaml
-- JOB: "intercept -g $DEVNODE | /opt/interception/interception-vimproved | uinput -d $DEVNODE"
+- JOB:
+    - "intercept -g $DEVNODE | /opt/interception/interception-vimproved | uinput -d $DEVNODE"
   DEVICE:
-    EVENTS:
-      EV_KEY:
-        [
-          KEY_SPACE,
-
-          KEY_1,
-          KEY_2,
-          KEY_3,
-          KEY_4,
-          KEY_5,
-          KEY_6,
-          KEY_7,
-          KEY_8,
-          KEY_9,
-          KEY_0,
-          KEY_MINUS,
-          KEY_EQUAL,
-          KEY_F1,
-          KEY_F2,
-          KEY_F3,
-          KEY_F4,
-          KEY_F5,
-          KEY_F6,
-          KEY_F7,
-          KEY_F8,
-          KEY_F9,
-          KEY_F10,
-          KEY_F11,
-          KEY_F12,
-
-          KEY_B,
-          KEY_BACKSPACE,
-
-          KEY_E,
-          KEY_ESC,
-
-          KEY_D,
-          KEY_DELETE,
-
-          KEY_Y,
-          KEY_U,
-          KEY_I,
-          KEY_O,
-          KEY_HOME,
-          KEY_PAGEDOWN,
-          KEY_PAGEUP,
-          KEY_END,
-
-          KEY_H,
-          KEY_J,
-          KEY_K,
-          KEY_L,
-          KEY_LEFT,
-          KEY_DOWN,
-          KEY_UP,
-          KEY_RIGHT,
-
-          KEY_M,
-          KEY_COMMA,
-          KEY_DOT,
-          KEY_MUTE,
-          KEY_VOLUMEDOWN,
-          KEY_VOLUMEUP,
-
-          KEY_CAPSLOCK,
-          KEY_LEFTCTRL,
-        ]
+    NAME: ".*((k|K)(eyboard|EYBOARD)|TADA68).*"
 ```
 
-Alternatively, you can run it with `udevmon` straight, just make sure to be negatively nice (`nice -n -20 udevmon -c /etc/udevmon.yml`) so your input is always available.
+That matches any udev devices containing keyboard in the name (or my external TADA68 keyboard).
+
+Alternatively, you can run it with `udevmon` binary straight, just make sure to be negatively nice (`nice -n -20 udevmon -c /etc/udevmon.yml`) so your input is always available.
+
+### Configuration
+Currently, there's no config file, but if you want to experiment with adding/removing/changing the mappings, take a look at the bottom of the ./interception-vimproved.cpp - `initInterceptedKeys` function has comments to guide you. Remember to `make` the project and replace the binary (or point to the new one from your udevmon config).
 
 ### Testing
 In case you want to edit the source code, kill the `udevmon` daemon, and manually try the following to avoid getting stuck with broken input. Trust me, you can get yourself in a dead end situation easily.
 
 ```bash
-# sleep buys you some time to focus away from terminal to your playground
+# sleep buys you some time to focus away from terminal to your playground, also you'll probably need to add a sudo
 sleep 1 && timeout 10 udevmon -c /etc/udevmon.yml
 ```
-
 
 ## Why make this
 1. I have problems switching back and forth between my external keyboard and laptop keyboard. I customized my external keyboard with QMK to reduce my pinky strain and improve usability, but when I switch back to laptop keyboard, it's all lost, plus I have to fight my muscle memory.
