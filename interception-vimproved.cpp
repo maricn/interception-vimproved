@@ -7,9 +7,12 @@
 #include <unordered_map>
 #include <vector>
 #include <cstdlib>
+
 #include <unistd.h>
 #include <filesystem>
 #include <linux/input.h>
+
+#include <yaml-cpp/yaml.h>
 
 using Event = input_event;
 using KeyCode = unsigned short;
@@ -536,13 +539,12 @@ auto initInterceptedKeys(const std::vector<Mapping>& mappings) -> std::vector<In
 auto read_mappings_or_default(int argc, char** argv) -> std::vector<Mapping> {
   if (argc < 2) return DEFAULT_MAPPINGS;
   try {
-    auto file = std::ifstream(argv[1]);
+    auto config = YAML::LoadFile(argv[1]);
     auto mappings = std::vector<Mapping>();
-    for (auto line = std::string(); std::getline(file, line);) {
-      auto from = std::string();
-      auto to = std::string();
-      std::istringstream(line) >> from >> to;
-      mappings.push_back(Mapping{KEYS.at(from), KEYS.at(to)});
+    for (const auto& mapping : config) {
+      auto from = KEYS.at(mapping["from"].as<std::string>());
+      auto to = KEYS.at(mapping["to"].as<std::string>());
+      mappings.push_back({from, to});
     }
     return mappings;
   } catch (...) {

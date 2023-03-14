@@ -1,31 +1,22 @@
-CXXFLAGS += -std=c++2b -D_POSIX_C_SOURCE=199309L -O3 -g -Wall -Wextra -Werror -Wno-unused-parameter -Wno-type-limits
-TIMEOUT ?= 10
+PROG_NAME = interception-vimproved
+BUILD_DIR = build
+INSTALL_DIR = /opt/interception
+TARGET = $(BUILD_DIR)/$(PROG_NAME)
+INSTALL_FILE = $(INSTALL_DIR)/$(PROG_NAME)
 
-INSTALL_FILE := /opt/interception/interception-vimproved
-
-# the build target executable:
-TARGET = interception-vimproved
-
-all: $(TARGET)
-
-$(TARGET): $(TARGET).cpp
-	$(CXX) $(CXXFLAGS) -o $(TARGET) $(TARGET).cpp
-
-.PHONY: clean
-clean:
-	rm -f $(TARGET) $(TARGET).o
+.PHONY: all
+all: build
 
 .PHONY: build
 build:
-	g++ -o interception-vimproved interception-vimproved.cpp
+	meson build
+	ninja -C build
 
 .PHONY: install
-install:
-	# If you have run `make test` then do not forget to run `make clean` after. Otherwise you may install with debug logs on.
+install: build
 	install -D --strip -T $(TARGET) $(INSTALL_FILE)
 
-.PHONY: test
-test:
-	CXXFLAGS=-DVERBOSE make
-	make install
-	timeout $(TIMEOUT) udevmon -c /etc/udevmon.yaml
+.PHONY: clean
+clean:
+	rm -rf $(BUILD_DIR)
+	rm -f $(INSTALL_FILE)
