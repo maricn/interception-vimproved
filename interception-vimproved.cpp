@@ -542,10 +542,7 @@ auto read_mappings_or_default(int argc, char** argv) -> std::vector<Mapping> {
       auto from = std::string();
       auto to = std::string();
       std::istringstream(line) >> from >> to;
-      auto from_key = KEYS.at(from);
-      auto to_key = KEYS.at(to);
-      auto mapping = Mapping{from_key, to_key};
-      mappings.push_back(mapping);
+      mappings.push_back(Mapping{KEYS.at(from), KEYS.at(to)});
     }
     return mappings;
   } catch (...) {
@@ -554,28 +551,18 @@ auto read_mappings_or_default(int argc, char** argv) -> std::vector<Mapping> {
 }
 
 auto main(int argc, char** argv) -> int {
-  auto interceptedKeys = initInterceptedKeys(read_mappings_or_default(argc, argv));
-
   std::setbuf(stdin, NULL);
   std::setbuf(stdout, NULL);
 
-  /* event *input = (event*) malloc(sizeof(Event)); */
+  auto intercepted_keys = initInterceptedKeys(read_mappings_or_default(argc, argv));
+
+  auto process_intercepted_keys = [&](auto input) {
+    return std::ranges::all_of(intercepted_keys, [&](auto k){return k->process(input);});
+  };
+
   for (auto input = Event(); readEvent(&input);) {
-    if (input.type == EV_MSC && input.code == MSC_SCAN) {
-      continue;
-    }
-
-    if (input.type != EV_KEY) {
-      writeEvent(&input);
-      continue;
-    }
-
-    auto emit_input = std::ranges::all_of(
-      interceptedKeys,
-      [&](const auto key) -> bool {return key->process(&input);}
-    );
-
-    if (emit_input) {
+    if (input.type == EV_MSC && input.code == MSC_SCAN) continue;
+    if (input.type != EV_KEY || process_intercepted_keys(&input)) {
       writeEvent(&input);
     }
   }
