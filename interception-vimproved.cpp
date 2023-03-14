@@ -13,7 +13,7 @@
 
 using Event = input_event;
 using KeyCode = unsigned short;
-using Mapping = std::pair<unsigned char, unsigned char>;
+using Mapping = std::pair<KeyCode, KeyCode>;
 
 const auto KEY_STROKE_UP = 0;
 const auto KEY_STROKE_DOWN = 1;
