@@ -1,22 +1,238 @@
-#include <set>
-#include <vector>
-#include <ranges>
-#include <iostream>
 #include <algorithm>
+#include <fstream>
+#include <iostream>
+#include <ranges>
+#include <set>
+#include <sstream>
+#include <unordered_map>
+#include <vector>
 #include <cstdlib>
 #include <unistd.h>
+#include <filesystem>
 #include <linux/input.h>
 
 using Event = input_event;
 using KeyCode = unsigned short;
+using Mapping = std::pair<unsigned char, unsigned char>;
 
 const auto KEY_STROKE_UP = 0;
 const auto KEY_STROKE_DOWN = 1;
 const auto KEY_STROKE_REPEAT = 2;
 
 // focus on key codes <= 0x151, covers most use cases including mouse buttons
-// see: git:linux/include/uapi/linux/input-event-codes.h
+// see: github.com/torvalds/linux/blob/master/include/uapi/linux/input-event-codes.h
 const auto MAX_KEY = 0x151;
+
+const auto KEYS = std::unordered_map<std::string, KeyCode> {
+// the following extra inner macro is not necessary as sometimes, like in stackoverflow.com/q/240353:
+// #define TO_STRING(X) #X
+
+// In our case, the Keycodes are preprocessing tokens already
+#define PAIR(K) { #K, K}
+
+  PAIR(KEY_E),
+  PAIR(KEY_ESC),
+  PAIR(KEY_D),
+  PAIR(KEY_DELETE),
+  PAIR(KEY_B),
+  PAIR(KEY_BACKSPACE),
+  PAIR(KEY_H),
+  PAIR(KEY_LEFT),
+  PAIR(KEY_J),
+  PAIR(KEY_DOWN),
+  PAIR(KEY_K),
+  PAIR(KEY_UP),
+  PAIR(KEY_L),
+  PAIR(KEY_RIGHT),
+  PAIR(KEY_Y),
+  PAIR(KEY_HOME),
+  PAIR(KEY_U),
+  PAIR(KEY_PAGEDOWN),
+  PAIR(KEY_I),
+  PAIR(KEY_PAGEUP),
+  PAIR(KEY_O),
+  PAIR(KEY_END),
+  PAIR(KEY_1),
+  PAIR(KEY_F1),
+  PAIR(KEY_2),
+  PAIR(KEY_F2),
+  PAIR(KEY_3),
+  PAIR(KEY_F3),
+  PAIR(KEY_4),
+  PAIR(KEY_F4),
+  PAIR(KEY_5),
+  PAIR(KEY_F5),
+  PAIR(KEY_6),
+  PAIR(KEY_F6),
+  PAIR(KEY_7),
+  PAIR(KEY_F7),
+  PAIR(KEY_8),
+  PAIR(KEY_F8),
+  PAIR(KEY_9),
+  PAIR(KEY_F9),
+  PAIR(KEY_0),
+  PAIR(KEY_F10),
+  PAIR(KEY_MINUS),
+  PAIR(KEY_F11),
+  PAIR(KEY_EQUAL),
+  PAIR(KEY_F12),
+  PAIR(KEY_M),
+  PAIR(KEY_MUTE),
+  PAIR(KEY_COMMA),
+  PAIR(KEY_VOLUMEDOWN),
+  PAIR(KEY_DOT),
+  PAIR(KEY_VOLUMEUP),
+  PAIR(BTN_LEFT),
+  PAIR(BTN_BACK),
+  PAIR(BTN_RIGHT),
+  PAIR(BTN_FORWARD),
+  PAIR(KEY_E),
+  PAIR(KEY_ESC),
+  PAIR(KEY_D),
+  PAIR(KEY_DELETE),
+  PAIR(KEY_B),
+  PAIR(KEY_BACKSPACE),
+  PAIR(KEY_H),
+  PAIR(KEY_LEFT),
+  PAIR(KEY_J),
+  PAIR(KEY_DOWN),
+  PAIR(KEY_K),
+  PAIR(KEY_UP),
+  PAIR(KEY_L),
+  PAIR(KEY_RIGHT),
+  PAIR(KEY_Y),
+  PAIR(KEY_HOME),
+  PAIR(KEY_U),
+  PAIR(KEY_PAGEDOWN),
+  PAIR(KEY_I),
+  PAIR(KEY_PAGEUP),
+  PAIR(KEY_O),
+  PAIR(KEY_END),
+  PAIR(KEY_1),
+  PAIR(KEY_F1),
+  PAIR(KEY_2),
+  PAIR(KEY_F2),
+  PAIR(KEY_3),
+  PAIR(KEY_F3),
+  PAIR(KEY_4),
+  PAIR(KEY_F4),
+  PAIR(KEY_5),
+  PAIR(KEY_F5),
+  PAIR(KEY_6),
+  PAIR(KEY_F6),
+  PAIR(KEY_7),
+  PAIR(KEY_F7),
+  PAIR(KEY_8),
+  PAIR(KEY_F8),
+  PAIR(KEY_9),
+  PAIR(KEY_F9),
+  PAIR(KEY_0),
+  PAIR(KEY_F10),
+  PAIR(KEY_MINUS),
+  PAIR(KEY_F11),
+  PAIR(KEY_EQUAL),
+  PAIR(KEY_F12),
+  PAIR(KEY_M),
+  PAIR(KEY_MUTE),
+  PAIR(KEY_COMMA),
+  PAIR(KEY_VOLUMEDOWN),
+  PAIR(KEY_DOT),
+  PAIR(KEY_VOLUMEUP),
+  PAIR(BTN_LEFT),
+  PAIR(BTN_BACK),
+  PAIR(BTN_RIGHT),
+  PAIR(BTN_FORWARD),
+  PAIR(KEY_SYSRQ),
+  PAIR(KEY_CONTEXT_MENU),
+
+#undef PAIR
+};
+
+const auto DEFAULT_MAPPINGS = std::vector<Mapping>{
+  // special chars
+  {KEY_E, KEY_ESC},
+  {KEY_D, KEY_DELETE},
+  {KEY_B, KEY_BACKSPACE},
+
+  // vim home row
+  {KEY_H, KEY_LEFT},
+  {KEY_J, KEY_DOWN},
+  {KEY_K, KEY_UP},
+  {KEY_L, KEY_RIGHT},
+
+  // vim above home row
+  {KEY_Y, KEY_HOME},
+  {KEY_U, KEY_PAGEDOWN},
+  {KEY_I, KEY_PAGEUP},
+  {KEY_O, KEY_END},
+
+  // number row to F keys
+  {KEY_1, KEY_F1},
+  {KEY_2, KEY_F2},
+  {KEY_3, KEY_F3},
+  {KEY_4, KEY_F4},
+  {KEY_5, KEY_F5},
+  {KEY_6, KEY_F6},
+  {KEY_7, KEY_F7},
+  {KEY_8, KEY_F8},
+  {KEY_9, KEY_F9},
+  {KEY_0, KEY_F10},
+  {KEY_MINUS, KEY_F11},
+  {KEY_EQUAL, KEY_F12},
+
+  // xf86 audio
+  {KEY_M, KEY_MUTE},
+  {KEY_COMMA, KEY_VOLUMEDOWN},
+  {KEY_DOT, KEY_VOLUMEUP},
+
+  // mouse navigation
+  {BTN_LEFT, BTN_BACK},
+  {BTN_RIGHT, BTN_FORWARD},
+
+  // special chars
+  {KEY_E, KEY_ESC},
+  {KEY_D, KEY_DELETE},
+  {KEY_B, KEY_BACKSPACE},
+
+  // vim home row
+  {KEY_H, KEY_LEFT},
+  {KEY_J, KEY_DOWN},
+  {KEY_K, KEY_UP},
+  {KEY_L, KEY_RIGHT},
+
+  // vim above home row
+  {KEY_Y, KEY_HOME},
+  {KEY_U, KEY_PAGEDOWN},
+  {KEY_I, KEY_PAGEUP},
+  {KEY_O, KEY_END},
+
+  // number row to F keys
+  {KEY_1, KEY_F1},
+  {KEY_2, KEY_F2},
+  {KEY_3, KEY_F3},
+  {KEY_4, KEY_F4},
+  {KEY_5, KEY_F5},
+  {KEY_6, KEY_F6},
+  {KEY_7, KEY_F7},
+  {KEY_8, KEY_F8},
+  {KEY_9, KEY_F9},
+  {KEY_0, KEY_F10},
+  {KEY_MINUS, KEY_F11},
+  {KEY_EQUAL, KEY_F12},
+
+  // xf86 audio
+  {KEY_M, KEY_MUTE},
+  {KEY_COMMA, KEY_VOLUMEDOWN},
+  {KEY_DOT, KEY_VOLUMEUP},
+
+  // mouse navigation
+  {BTN_LEFT, BTN_BACK},
+  {BTN_RIGHT, BTN_FORWARD},
+
+  // FIXME: this is not working, even though `wev` says keycode 99 is Print
+  // PrtSc -> Context Menu
+  {KEY_SYSRQ, KEY_CONTEXT_MENU}
+};
 
 const auto syn = new Event{
   .time = {.tv_sec = 0, .tv_usec = 0},
@@ -236,9 +452,8 @@ public:
 
   ~InterceptedKeyLayer() { delete _map; }
 
-  using Mapping = std::pair<unsigned char, unsigned char>;
 
-  auto add_mappings(std::initializer_list<Mapping> mappings) {
+  auto add_mappings(const std::vector<Mapping>& mappings) {
     for (const auto& [from, to] : mappings) {
       _map[from] = to;
     }
@@ -299,95 +514,10 @@ public:
   }
 };
 
-auto initInterceptedKeys() -> std::vector<InterceptedKey*> {
+auto initInterceptedKeys(const std::vector<Mapping>& mappings) -> std::vector<InterceptedKey*> {
   // tap space for space, hold for layer mapping
   auto space = new InterceptedKeyLayer(KEY_SPACE, KEY_SPACE);
-
-  space->add_mappings({
-    // special chars
-    {KEY_E, KEY_ESC},
-    {KEY_D, KEY_DELETE},
-    {KEY_B, KEY_BACKSPACE},
-
-    // vim home row
-    {KEY_H, KEY_LEFT},
-    {KEY_J, KEY_DOWN},
-    {KEY_K, KEY_UP},
-    {KEY_L, KEY_RIGHT},
-
-    // vim above home row
-    {KEY_Y, KEY_HOME},
-    {KEY_U, KEY_PAGEDOWN},
-    {KEY_I, KEY_PAGEUP},
-    {KEY_O, KEY_END},
-
-    // number row to F keys
-    {KEY_1, KEY_F1},
-    {KEY_2, KEY_F2},
-    {KEY_3, KEY_F3},
-    {KEY_4, KEY_F4},
-    {KEY_5, KEY_F5},
-    {KEY_6, KEY_F6},
-    {KEY_7, KEY_F7},
-    {KEY_8, KEY_F8},
-    {KEY_9, KEY_F9},
-    {KEY_0, KEY_F10},
-    {KEY_MINUS, KEY_F11},
-    {KEY_EQUAL, KEY_F12},
-
-    // xf86 audio
-    {KEY_M, KEY_MUTE},
-    {KEY_COMMA, KEY_VOLUMEDOWN},
-    {KEY_DOT, KEY_VOLUMEUP},
-
-    // mouse navigation
-    {BTN_LEFT, BTN_BACK},
-    {BTN_RIGHT, BTN_FORWARD},
-
-    // special chars
-    {KEY_E, KEY_ESC},
-    {KEY_D, KEY_DELETE},
-    {KEY_B, KEY_BACKSPACE},
-
-    // vim home row
-    {KEY_H, KEY_LEFT},
-    {KEY_J, KEY_DOWN},
-    {KEY_K, KEY_UP},
-    {KEY_L, KEY_RIGHT},
-
-    // vim above home row
-    {KEY_Y, KEY_HOME},
-    {KEY_U, KEY_PAGEDOWN},
-    {KEY_I, KEY_PAGEUP},
-    {KEY_O, KEY_END},
-
-    // number row to F keys
-    {KEY_1, KEY_F1},
-    {KEY_2, KEY_F2},
-    {KEY_3, KEY_F3},
-    {KEY_4, KEY_F4},
-    {KEY_5, KEY_F5},
-    {KEY_6, KEY_F6},
-    {KEY_7, KEY_F7},
-    {KEY_8, KEY_F8},
-    {KEY_9, KEY_F9},
-    {KEY_0, KEY_F10},
-    {KEY_MINUS, KEY_F11},
-    {KEY_EQUAL, KEY_F12},
-
-    // xf86 audio
-    {KEY_M, KEY_MUTE},
-    {KEY_COMMA, KEY_VOLUMEDOWN},
-    {KEY_DOT, KEY_VOLUMEUP},
-
-    // mouse navigation
-    {BTN_LEFT, BTN_BACK},
-    {BTN_RIGHT, BTN_FORWARD},
-
-    // FIXME: this is not working, even though `wev` says keycode 99 is Print
-    // PrtSc -> Context Menu
-    {KEY_SYSRQ, KEY_CONTEXT_MENU}
-  });
+  space->add_mappings(mappings);
 
   // tap caps for esc, hold for ctrl
   auto caps = new InterceptedKeyModifier(KEY_CAPSLOCK, KEY_ESC, KEY_LEFTCTRL);
@@ -403,8 +533,28 @@ auto initInterceptedKeys() -> std::vector<InterceptedKey*> {
   return interceptedKeys;
 }
 
-auto main() -> int {
-  auto interceptedKeys = initInterceptedKeys();
+auto read_mappings_or_default(int argc, char** argv) -> std::vector<Mapping> {
+  if (argc < 2) return DEFAULT_MAPPINGS;
+  try {
+    auto file = std::ifstream(argv[1]);
+    auto mappings = std::vector<Mapping>();
+    for (auto line = std::string(); std::getline(file, line);) {
+      auto from = std::string();
+      auto to = std::string();
+      std::istringstream(line) >> from >> to;
+      auto from_key = KEYS.at(from);
+      auto to_key = KEYS.at(to);
+      auto mapping = Mapping{from_key, to_key};
+      mappings.push_back(mapping);
+    }
+    return mappings;
+  } catch (...) {
+    return DEFAULT_MAPPINGS;
+  }
+}
+
+auto main(int argc, char** argv) -> int {
+  auto interceptedKeys = initInterceptedKeys(read_mappings_or_default(argc, argv));
 
   std::setbuf(stdin, NULL);
   std::setbuf(stdout, NULL);
