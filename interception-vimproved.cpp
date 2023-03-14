@@ -1,201 +1,179 @@
-#include <cstdlib>
-#include <iostream>
-
-#include <linux/input.h>
 #include <set>
-#include <unistd.h>
 #include <vector>
+#include <ranges>
+#include <iostream>
+#include <algorithm>
+#include <cstdlib>
+#include <unistd.h>
+#include <linux/input.h>
 
-using namespace std;
+using Event = input_event;
+using KeyCode = unsigned short;
 
-/**
- * Global constants
- **/
-const int KEY_STROKE_UP = 0, KEY_STROKE_DOWN = 1, KEY_STROKE_REPEAT = 2;
-const int input_event_struct_size = sizeof(struct input_event);
+const auto KEY_STROKE_UP = 0;
+const auto KEY_STROKE_DOWN = 1;
+const auto KEY_STROKE_REPEAT = 2;
 
-/**
- * Only very rare keys are above 0x151, not found on most of keyboards, probably
- * you don't need to mimic them. We cover above 0x100 which includes mouse BTNs.
- * Check what else is there at:
- * https://github.com/torvalds/linux/blob/master/include/uapi/linux/input-event-codes.h
- **/
-const unsigned short MAX_KEY = 0x151;
+// focus on key codes <= 0x151, covers most use cases including mouse buttons
+// see: git:linux/include/uapi/linux/input-event-codes.h
+const auto MAX_KEY = 0x151;
 
-typedef struct input_event Event;
+const auto syn = new Event{
+  .time = {.tv_sec = 0, .tv_usec = 0},
+  .type = EV_SYN,
+  .code = SYN_REPORT,
+  .value = KEY_STROKE_UP
+};
 
-// clang-format off
-const Event
-_syn = {.time = { .tv_sec = 0, .tv_usec = 0}, .type = EV_SYN, .code = SYN_REPORT, .value = KEY_STROKE_UP};
-const Event
-*syn = &_syn;
-// clang-format on
-
-int readEvent(Event *e) {
-  return fread(e, input_event_struct_size, 1, stdin) == 1;
+auto readEvent(Event *e) -> int {
+  return std::fread(e, sizeof(Event), 1, stdin) == 1;
 }
 
-void writeEvent(const Event *e) {
-  if (fwrite(e, input_event_struct_size, 1, stdout) != 1)
-    exit(EXIT_FAILURE);
+auto writeEvent(const Event *event) {
+  if (std::fwrite(event, sizeof(Event), 1, stdout) != 1) {
+    std::exit(EXIT_FAILURE);
+  }
 }
 
-void writeEvents(const vector<input_event> *events) {
-  const unsigned long size = events->size();
-  if (fwrite(events->data(), input_event_struct_size, size, stdout) != size)
-    exit(EXIT_FAILURE);
+auto writeEvents(const std::vector<Event>& events) {
+  if (std::fwrite(events.data(), sizeof(Event), events.size(), stdout) != events.size()) {
+    std::exit(EXIT_FAILURE);
+  }
 }
 
-// @TODO: convert to a map cache to reduce amount of memory allocations
-Event buildEvent(int direction, unsigned short keycode) {
-  input_event ev = {.time = {.tv_sec = 0, .tv_usec = 0},
-                    .type = EV_KEY,
-                    .code = keycode,
-                    .value = direction};
-  return ev;
+// TODO: convert to a map cache to reduce amount of memory allocations
+auto buildEvent(int direction, KeyCode keycode) -> Event {
+  return {
+    .time = {.tv_sec = 0, .tv_usec = 0},
+    .type = EV_KEY,
+    .code = keycode,
+    .value = direction
+  };
 }
 
-Event buildEventDown(unsigned short keycode) {
-  return buildEvent(KEY_STROKE_DOWN, keycode);
-}
-
-Event buildEventUp(unsigned short keycode) {
+auto buildEventUp(KeyCode keycode) -> Event {
   return buildEvent(KEY_STROKE_UP, keycode);
 }
 
-void writeCombo(unsigned short keycode) {
-  input_event key_down = {.time = {.tv_sec = 0, .tv_usec = 0},
-                          .type = EV_KEY,
-                          .code = keycode,
-                          .value = KEY_STROKE_DOWN};
-  input_event key_up = {.time = {.tv_sec = 0, .tv_usec = 0},
-                        .type = EV_KEY,
-                        .code = keycode,
-                        .value = KEY_STROKE_UP};
+auto writeCombo(KeyCode keycode) {
+  auto key_down = Event{
+    .time = {.tv_sec = 0, .tv_usec = 0},
+    .type = EV_KEY,
+    .code = keycode,
+    .value = KEY_STROKE_DOWN
+  };
 
-  vector<input_event> *combo = new vector<input_event>();
-  combo->push_back(key_down);
-  combo->push_back(*syn);
-  combo->push_back(key_up);
-  writeEvents(combo);
+  auto key_up = Event{
+    .time = {.tv_sec = 0, .tv_usec = 0},
+    .type = EV_KEY,
+    .code = keycode,
+    .value = KEY_STROKE_UP
+  };
 
-  delete combo;
+  writeEvents({key_down, *syn, key_up});
 }
 
-/***************************************************************
- *********************** Global classes ************************
- **************************************************************/
-
-/**
- * Intercepted key specification
- **/
+// Intercepted key specification
 class InterceptedKey {
 public:
-  enum State { START = 0, INTERCEPTED_KEY_HELD = 1, OTHER_KEY_HELD = 2 };
+  enum class State{START, INTERCEPTED_KEY_HELD, OTHER_KEY_HELD};
 
-  static int isModifier(int key) {
+  static auto isModifier(int key) -> int {
     switch (key) {
-    default:
-      return 0;
-    // clang-format off
-    case KEY_LEFTSHIFT: case KEY_RIGHTSHIFT:
-    case KEY_LEFTCTRL: case KEY_RIGHTCTRL:
-    case KEY_LEFTALT: case KEY_RIGHTALT:
-    case KEY_LEFTMETA: case KEY_RIGHTMETA:
-    // clang-format on
-    // @TODO: handle capslock as not modifier?
-    case KEY_CAPSLOCK:
-      return 1;
+      default: return 0;
+      case KEY_LEFTSHIFT:
+      case KEY_RIGHTSHIFT:
+      case KEY_LEFTCTRL:
+      case KEY_RIGHTCTRL:
+      case KEY_LEFTALT:
+      case KEY_RIGHTALT:
+      case KEY_LEFTMETA:
+      case KEY_RIGHTMETA:
+      // TODO: handle capslock as not modifier?
+      case KEY_CAPSLOCK: return 1;
     }
   }
 
-  InterceptedKey(unsigned short intercepted, unsigned short tapped) {
-    this->_intercepted = intercepted;
-    this->_tapped = tapped;
-  }
+  InterceptedKey(KeyCode intercepted, KeyCode tapped)
+    :_intercepted{intercepted}, _tapped{tapped} { }
 
-  bool matches(unsigned short code) { return this->_intercepted == code; }
+  auto matches(KeyCode code) -> bool { return _intercepted == code; }
 
-  State getState() { return this->_state; }
+  auto getState() -> State { return _state; }
 
-  bool process(Event *input) {
-    switch (this->_state) {
-    case START:
-      return this->processStart(input);
-    case INTERCEPTED_KEY_HELD:
-      return this->processInterceptedHeld(input);
-    case OTHER_KEY_HELD:
-      return this->processOtherKeyHeld(input);
+  auto process(Event *input) -> bool {
+    switch (_state) {
+      case State::START: return processStart(input);
+      case State::INTERCEPTED_KEY_HELD: return processInterceptedHeld(input);
+      case State::OTHER_KEY_HELD: return processOtherKeyHeld(input);
+      default: throw std::exception();
     }
-
-    throw std::exception();
   }
 
 protected:
-  bool processStart(Event *input) {
-    if (this->matches(input->code) && input->value == KEY_STROKE_DOWN) {
-      this->_shouldEmitTapped = true;
-      this->_state = INTERCEPTED_KEY_HELD;
+  auto processStart(Event *input) -> bool {
+    if (matches(input->code) && input->value == KEY_STROKE_DOWN) {
+      _shouldEmitTapped = true;
+      _state = State::INTERCEPTED_KEY_HELD;
       return false;
     }
-
     return true;
   };
 
-  virtual bool processInterceptedHeld(Event *input) = 0;
-  virtual bool processOtherKeyHeld(Event *input) = 0;
+  virtual auto processInterceptedHeld(Event* input) -> bool = 0;
+  virtual auto processOtherKeyHeld(Event* input) -> bool = 0;
 
-  unsigned short _intercepted;
-  unsigned short _tapped;
+  KeyCode _intercepted;
+  KeyCode _tapped;
   State _state;
   bool _shouldEmitTapped = true;
 };
 
 class InterceptedKeyLayer : public InterceptedKey {
 private:
-  unsigned short *_map;
-  set<unsigned short> *_heldKeys = new set<unsigned short>();
+  KeyCode* _map;
+  std::set<KeyCode>* _heldKeys = new std::set<KeyCode>();
 
 protected:
-  Event map(Event *input) {
-    Event result(*input);
-    result.code = this->_map[input->code];
+  auto map(Event* input) -> Event {
+    auto result = *input;
+    result.code = _map[input->code];
     return result;
   }
 
-  bool processInterceptedHeld(Event *input) override {
-    if (this->matches(input->code) && input->value != KEY_STROKE_UP) {
+  auto processInterceptedHeld(Event *input) -> bool override {
+    if (matches(input->code) && input->value != KEY_STROKE_UP) {
       return false; // don't emit anything
     }
 
-    if (this->matches(input->code)) { // && stroke up
+    if (matches(input->code)) { // && stroke up
       // TODO: find a way to have a mouse click mark the key as intercepted
       // or just make it time based
-      // this->_shouldEmitTapped &= mouse clicked || timeout;
+      // _shouldEmitTapped &= mouse clicked || timeout;
 
-      if (this->_shouldEmitTapped) {
-        writeCombo(this->_tapped);
-        this->_shouldEmitTapped = false;
+      if (_shouldEmitTapped) {
+        writeCombo(_tapped);
+        _shouldEmitTapped = false;
       }
 
-      this->_state = START;
+      _state = State::START;
       return false;
     }
 
-    if (input->value == KEY_STROKE_DOWN) { // any other key
+    if (input->value == KEY_STROKE_DOWN) {
+      // any other key
 
-      // @NOTE: if we don't blindly set _shouldEmitTapped to false on any
+      // NOTE: if we don't blindly set _shouldEmitTapped to false on any
       // keypress, we can type faster because only in case of mapped key down,
       // the intercepted key will not be emitted - useful for scenario:
       // L_DOWN, SPACE_DOWN, A_DOWN, L_UP, A_UP, SPACE_UP
-      this->_shouldEmitTapped &= !this->hasMapped(input->code) &&
-                                 !InterceptedKey::isModifier(input->code);
+      _shouldEmitTapped &= !hasMapped(input->code) && !InterceptedKey::isModifier(input->code);
 
-      if (this->hasMapped(input->code)) {
-        this->_heldKeys->insert(input->code);
-        Event mapped = this->map(input);
+      if (hasMapped(input->code)) {
+        _heldKeys->insert(input->code);
+        auto mapped = map(input);
         writeEvent(&mapped);
-        this->_state = InterceptedKey::OTHER_KEY_HELD;
+        _state = InterceptedKey::State::OTHER_KEY_HELD;
         return false;
       }
     }
@@ -203,110 +181,106 @@ protected:
     return true;
   }
 
-  bool processOtherKeyHeld(Event *input) override {
-    if (input->code == this->_intercepted && input->value != KEY_STROKE_UP)
+  auto processOtherKeyHeld(Event *input) -> bool override {
+    if (input->code == _intercepted && input->value != KEY_STROKE_UP) {
       return false;
-    if (input->value == KEY_STROKE_DOWN &&
-        this->_heldKeys->find(input->code) != this->_heldKeys->end()) {
+    }
+    if (input->value == KEY_STROKE_DOWN
+        && _heldKeys->find(input->code) != _heldKeys->end()) {
       return false;
     }
 
-    bool shouldEmitInput = true;
+    auto shouldEmitInput = true;
     if (input->value == KEY_STROKE_UP) {
-
-      if (this->_heldKeys->find(input->code) !=
-          this->_heldKeys->end()) { // one of mapped held keys goes up
-        Event mapped = this->map(input);
+      // one of mapped held keys goes up
+      if (_heldKeys->find(input->code) != _heldKeys->end()) {
+        auto mapped = map(input);
         writeEvent(&mapped);
-        this->_heldKeys->erase(input->code);
-        if (this->_heldKeys->empty()) {
-          this->_state = InterceptedKey::INTERCEPTED_KEY_HELD;
+        _heldKeys->erase(input->code);
+        if (_heldKeys->empty()) {
+          _state = InterceptedKey::State::INTERCEPTED_KEY_HELD;
         }
         shouldEmitInput = false;
-      } else { // key that was not mapped & held goes up
-        if (this->matches(input->code)) {
-          vector<Event> *held_keys_up = new vector<Event>();
-          for (auto held_key_code : *this->_heldKeys) {
-            Event held_key_up = buildEventUp(this->_map[held_key_code]);
-            held_keys_up->push_back(held_key_up);
-            held_keys_up->push_back(*syn);
+      } else {
+        // key that was not mapped & held goes up
+        if (matches(input->code)) {
+          auto held_keys_up = std::vector<Event>{};
+          for (auto held_key_code : *_heldKeys) {
+            auto held_key_up = buildEventUp(_map[held_key_code]);
+            held_keys_up.push_back(held_key_up);
+            held_keys_up.push_back(*syn);
           }
 
           writeEvents(held_keys_up);
-          delete held_keys_up;
-          this->_heldKeys->clear();
-          this->_state = InterceptedKey::START;
+          _heldKeys->clear();
+          _state = InterceptedKey::State::START;
           shouldEmitInput = false;
         }
       }
     } else { // KEY_STROKE_DOWN or KEY_STROKE_REPEAT
-      if (this->hasMapped(input->code)) {
-        auto mapped = this->map(input);
+      if (hasMapped(input->code)) {
+        auto mapped = map(input);
         writeEvent(&mapped);
         if (input->value == KEY_STROKE_DOWN) {
-          this->_heldKeys->insert(input->code);
+          _heldKeys->insert(input->code);
         }
         shouldEmitInput = false;
       }
     }
-
     return shouldEmitInput;
   }
 
 public:
-  InterceptedKeyLayer(unsigned short intercepted, unsigned short tapped)
-      : InterceptedKey(intercepted, tapped) {
-    this->_map = new unsigned short[MAX_KEY]{0};
+  InterceptedKeyLayer(KeyCode intercepted, KeyCode tapped):
+    InterceptedKey(intercepted, tapped), _map{new KeyCode[MAX_KEY]{0}} {}
+
+  ~InterceptedKeyLayer() { delete _map; }
+
+  using Mapping = std::pair<unsigned char, unsigned char>;
+
+  auto add_mappings(std::initializer_list<Mapping> mappings) {
+    for (const auto& [from, to] : mappings) {
+      _map[from] = to;
+    }
   }
 
-  ~InterceptedKeyLayer() { delete this->_map; }
-
-  InterceptedKey *addMapping(unsigned short from, unsigned short to) {
-    this->_map[from] = to;
-    return this;
-  }
-
-  bool hasMapped(unsigned short from) { return this->_map[from] != 0; }
+  auto hasMapped(KeyCode from) -> bool { return _map[from] != 0; }
 };
 
 class InterceptedKeyModifier : public InterceptedKey {
 protected:
-  unsigned short _modifier;
+  KeyCode _modifier;
 
   bool processInterceptedHeld(Event *input) override {
-    if (this->matches(input->code) && input->value != KEY_STROKE_UP) {
+    if (matches(input->code) && input->value != KEY_STROKE_UP) {
       return false;
     }
 
     bool shouldEmitInput = true;
-    if (this->matches(input->code)) { // && stroke up
-      if (this->_shouldEmitTapped) {
-        writeCombo(this->_tapped);
+    if (matches(input->code)) { // && stroke up
+      if (_shouldEmitTapped) {
+        writeCombo(_tapped);
       } else { // intercepted is mapped to modifier and key stroke up
         Event *modifier_up = new Event(*input);
-        modifier_up->code = this->_modifier;
+        modifier_up->code = _modifier;
         writeEvent(modifier_up);
         delete modifier_up;
       }
 
-      this->_state = START;
+      _state = State::START;
       return false;
     }
 
     if (input->value == KEY_STROKE_DOWN) { // any other than intercepted
-      if (this->_shouldEmitTapped) { // on first non-matching input after a
+      if (_shouldEmitTapped) { // on first non-matching input after a
                                      // matching input
-        Event *modifier_down = new Event(*input);
-        modifier_down->code = this->_modifier;
+        auto modifier_down = new Event(*input);
+        modifier_down->code = _modifier;
 
         // for some reason, need to push "syn" after modifier here
-        vector<Event> *modifier_and_input = new vector<Event>();
-        modifier_and_input->push_back(*modifier_down);
-        modifier_and_input->push_back(*syn);
-        writeEvents(modifier_and_input);
+        writeEvents({*modifier_down, *syn});
 
-        this->_shouldEmitTapped = false;
-        delete modifier_and_input;
+        _shouldEmitTapped = false;
         return true; // gotta emit input event independently so we can process layer+modifier+input together
       }
     }
@@ -314,114 +288,145 @@ protected:
     return shouldEmitInput;
   }
 
-  bool processOtherKeyHeld(Event *input) override { return true; }
+  auto processOtherKeyHeld([[maybe_unused]] Event *input) -> bool override { return true; }
 
 public:
-  InterceptedKeyModifier(unsigned short intercepted, unsigned short tapped,
-                         unsigned short modifier)
-      : InterceptedKey(intercepted, tapped) {
-    if (!InterceptedKey::isModifier(modifier))
-      throw invalid_argument("Specified wrong modifier key");
-    this->_modifier = modifier;
+  InterceptedKeyModifier(KeyCode intercepted, KeyCode tapped, KeyCode modifier) : InterceptedKey(intercepted, tapped) {
+    if (!InterceptedKey::isModifier(modifier)) {
+      throw std::invalid_argument("Specified wrong modifier key");
+    }
+    _modifier = modifier;
   }
 };
 
-vector<InterceptedKey *> *initInterceptedKeys() {
+auto initInterceptedKeys() -> std::vector<InterceptedKey*> {
   // tap space for space, hold for layer mapping
-  InterceptedKeyLayer *space = new InterceptedKeyLayer(KEY_SPACE, KEY_SPACE);
+  auto space = new InterceptedKeyLayer(KEY_SPACE, KEY_SPACE);
 
-  // special chars
-  space->addMapping(KEY_E, KEY_ESC);
-  space->addMapping(KEY_D, KEY_DELETE);
-  space->addMapping(KEY_B, KEY_BACKSPACE);
+  space->add_mappings({
+    // special chars
+    {KEY_E, KEY_ESC},
+    {KEY_D, KEY_DELETE},
+    {KEY_B, KEY_BACKSPACE},
 
-  // vim home row
-  space->addMapping(KEY_H, KEY_LEFT);
-  space->addMapping(KEY_J, KEY_DOWN);
-  space->addMapping(KEY_K, KEY_UP);
-  space->addMapping(KEY_L, KEY_RIGHT);
+    // vim home row
+    {KEY_H, KEY_LEFT},
+    {KEY_J, KEY_DOWN},
+    {KEY_K, KEY_UP},
+    {KEY_L, KEY_RIGHT},
 
-  // vim above home row
-  space->addMapping(KEY_Y, KEY_HOME);
-  space->addMapping(KEY_U, KEY_PAGEDOWN);
-  space->addMapping(KEY_I, KEY_PAGEUP);
-  space->addMapping(KEY_O, KEY_END);
+    // vim above home row
+    {KEY_Y, KEY_HOME},
+    {KEY_U, KEY_PAGEDOWN},
+    {KEY_I, KEY_PAGEUP},
+    {KEY_O, KEY_END},
 
-  // number row to F keys
-  space->addMapping(KEY_1, KEY_F1);
-  space->addMapping(KEY_2, KEY_F2);
-  space->addMapping(KEY_3, KEY_F3);
-  space->addMapping(KEY_4, KEY_F4);
-  space->addMapping(KEY_5, KEY_F5);
-  space->addMapping(KEY_6, KEY_F6);
-  space->addMapping(KEY_7, KEY_F7);
-  space->addMapping(KEY_8, KEY_F8);
-  space->addMapping(KEY_9, KEY_F9);
-  space->addMapping(KEY_0, KEY_F10);
-  space->addMapping(KEY_MINUS, KEY_F11);
-  space->addMapping(KEY_EQUAL, KEY_F12);
+    // number row to F keys
+    {KEY_1, KEY_F1},
+    {KEY_2, KEY_F2},
+    {KEY_3, KEY_F3},
+    {KEY_4, KEY_F4},
+    {KEY_5, KEY_F5},
+    {KEY_6, KEY_F6},
+    {KEY_7, KEY_F7},
+    {KEY_8, KEY_F8},
+    {KEY_9, KEY_F9},
+    {KEY_0, KEY_F10},
+    {KEY_MINUS, KEY_F11},
+    {KEY_EQUAL, KEY_F12},
 
-  // xf86 audio
-  space->addMapping(KEY_M, KEY_MUTE);
-  space->addMapping(KEY_COMMA, KEY_VOLUMEDOWN);
-  space->addMapping(KEY_DOT, KEY_VOLUMEUP);
+    // xf86 audio
+    {KEY_M, KEY_MUTE},
+    {KEY_COMMA, KEY_VOLUMEDOWN},
+    {KEY_DOT, KEY_VOLUMEUP},
 
-  // mouse navigation
-  space->addMapping(BTN_LEFT, BTN_BACK);
-  space->addMapping(BTN_RIGHT, BTN_FORWARD);
+    // mouse navigation
+    {BTN_LEFT, BTN_BACK},
+    {BTN_RIGHT, BTN_FORWARD},
 
-  // @FIXME: this is not working, even though `wev` says keycode 99 is Print
-  // PrtSc -> Context Menu
-  space->addMapping(KEY_SYSRQ, KEY_CONTEXT_MENU);
+    // special chars
+    {KEY_E, KEY_ESC},
+    {KEY_D, KEY_DELETE},
+    {KEY_B, KEY_BACKSPACE},
+
+    // vim home row
+    {KEY_H, KEY_LEFT},
+    {KEY_J, KEY_DOWN},
+    {KEY_K, KEY_UP},
+    {KEY_L, KEY_RIGHT},
+
+    // vim above home row
+    {KEY_Y, KEY_HOME},
+    {KEY_U, KEY_PAGEDOWN},
+    {KEY_I, KEY_PAGEUP},
+    {KEY_O, KEY_END},
+
+    // number row to F keys
+    {KEY_1, KEY_F1},
+    {KEY_2, KEY_F2},
+    {KEY_3, KEY_F3},
+    {KEY_4, KEY_F4},
+    {KEY_5, KEY_F5},
+    {KEY_6, KEY_F6},
+    {KEY_7, KEY_F7},
+    {KEY_8, KEY_F8},
+    {KEY_9, KEY_F9},
+    {KEY_0, KEY_F10},
+    {KEY_MINUS, KEY_F11},
+    {KEY_EQUAL, KEY_F12},
+
+    // xf86 audio
+    {KEY_M, KEY_MUTE},
+    {KEY_COMMA, KEY_VOLUMEDOWN},
+    {KEY_DOT, KEY_VOLUMEUP},
+
+    // mouse navigation
+    {BTN_LEFT, BTN_BACK},
+    {BTN_RIGHT, BTN_FORWARD},
+
+    // FIXME: this is not working, even though `wev` says keycode 99 is Print
+    // PrtSc -> Context Menu
+    {KEY_SYSRQ, KEY_CONTEXT_MENU}
+  });
 
   // tap caps for esc, hold for ctrl
-  InterceptedKeyModifier *caps =
-      new InterceptedKeyModifier(KEY_CAPSLOCK, KEY_ESC, KEY_LEFTCTRL);
+  auto caps = new InterceptedKeyModifier(KEY_CAPSLOCK, KEY_ESC, KEY_LEFTCTRL);
 
   // tap enter for enter, hold for ctrl
-  InterceptedKeyModifier *enter =
-      new InterceptedKeyModifier(KEY_ENTER, KEY_ENTER, KEY_RIGHTCTRL);
+  auto enter = new InterceptedKeyModifier(KEY_ENTER, KEY_ENTER, KEY_RIGHTCTRL);
 
-  // @NOTE: modifier keys must go first because layerKey.processInterceptedHeld
+  // NOTE: modifier keys must go first because layerKey.processInterceptedHeld
   // emits mapped key as soon as the for loop calls layerKey.process..
   // if that process is run before modifierKey.process, the modifier key will
   // not be emitted
-  vector<InterceptedKey *> *interceptedKeys = new vector<InterceptedKey *>();
-  interceptedKeys->push_back(caps);
-  interceptedKeys->push_back(enter);
-  interceptedKeys->push_back(space);
+  auto interceptedKeys = std::vector<InterceptedKey*>{caps, enter, space};
   return interceptedKeys;
 }
 
-int main() {
+auto main() -> int {
   auto interceptedKeys = initInterceptedKeys();
 
-  setbuf(stdin, NULL), setbuf(stdout, NULL);
+  std::setbuf(stdin, NULL);
+  std::setbuf(stdout, NULL);
 
-  /* event *input = (event*) malloc(input_event_struct_size); */
-  Event *input = new Event();
-  while (readEvent(input)) {
-    if (input->type == EV_MSC && input->code == MSC_SCAN)
-      continue;
-
-    if (input->type != EV_KEY) {
-      writeEvent(input);
+  /* event *input = (event*) malloc(sizeof(Event)); */
+  for (auto input = Event(); readEvent(&input);) {
+    if (input.type == EV_MSC && input.code == MSC_SCAN) {
       continue;
     }
 
-    /* cerr << input->type << "," << input->code << " "; */
-
-    bool shouldEmitInput = true;
-    for (auto key : *interceptedKeys) {
-      shouldEmitInput &= key->process(input);
+    if (input.type != EV_KEY) {
+      writeEvent(&input);
+      continue;
     }
 
-    if (shouldEmitInput) {
-      writeEvent(input);
+    auto emit_input = std::ranges::all_of(
+      interceptedKeys,
+      [&](const auto key) -> bool {return key->process(&input);}
+    );
+
+    if (emit_input) {
+      writeEvent(&input);
     }
   }
-
-  /* free(input); */
-  delete input;
-  delete interceptedKeys;
 }
