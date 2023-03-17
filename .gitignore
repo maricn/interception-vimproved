@@ -1,3 +1,8 @@
-.ccls-cache
-*.swp
-interception-vimproved
+*
+!.gitignore
+!README.md
+!LICENSE
+!Makefile
+!meson.build
+!config.yaml
+!interception-vimproved.cpp

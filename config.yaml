@@ -1,0 +1,194 @@
+  # special chars
+- from: KEY_E
+  to: KEY_ESC
+
+# alternative syntax
+- {from: KEY_D, to: KEY_DELETE}
+
+# possibly even
+- layer: KEY_SPACE
+  from: KEY_B
+  to: KEY_BACKSPACE
+
+  # vim home row
+- from: KEY_H
+  to: KEY_LEFT
+
+- from: KEY_J
+  to: KEY_DOWN
+
+- from: KEY_K
+  to: KEY_UP
+
+- from: KEY_L
+  to: KEY_RIGHT
+
+  # vim above home row
+- from: KEY_Y
+  to: KEY_HOME
+
+- from: KEY_U
+  to: KEY_PAGEDOWN
+
+- from: KEY_I
+  to: KEY_PAGEUP
+
+- from: KEY_O
+  to: KEY_END
+
+  # number row to F keys
+- from: KEY_1
+  to: KEY_F1
+
+- from: KEY_2
+  to: KEY_F2
+
+- from: KEY_3
+  to: KEY_F3
+
+- from: KEY_4
+  to: KEY_F4
+
+- from: KEY_5
+  to: KEY_F5
+
+- from: KEY_6
+  to: KEY_F6
+
+- from: KEY_7
+  to: KEY_F7
+
+- from: KEY_8
+  to: KEY_F8
+
+- from: KEY_9
+  to: KEY_F9
+
+- from: KEY_0
+  to: KEY_F10
+
+- from: KEY_MINUS
+  to: KEY_F11
+
+- from: KEY_EQUAL
+  to: KEY_F12
+
+
+  # xf86 audio
+- from: KEY_M
+  to: KEY_MUTE
+
+- from: KEY_COMMA
+  to: KEY_VOLUMEDOWN
+
+- from: KEY_DOT
+  to: KEY_VOLUMEUP
+
+
+  # mouse navigation
+- from: BTN_LEFT
+  to: BTN_BACK
+
+- from: BTN_RIGHT
+  to: BTN_FORWARD
+
+
+  # special chars
+- from: KEY_E
+  to: KEY_ESC
+
+- from: KEY_D
+  to: KEY_DELETE
+
+- from: KEY_B
+  to: KEY_BACKSPACE
+
+  # vim home row
+- from: KEY_H
+  to: KEY_LEFT
+
+- from: KEY_J
+  to: KEY_DOWN
+
+- from: KEY_K
+  to: KEY_UP
+
+- from: KEY_L
+  to: KEY_RIGHT
+
+  # vim above home row
+- from: KEY_Y
+  to: KEY_HOME
+
+- from: KEY_U
+  to: KEY_PAGEDOWN
+
+- from: KEY_I
+  to: KEY_PAGEUP
+
+- from: KEY_O
+  to: KEY_END
+
+
+  # number row to F keys
+- from: KEY_1
+  to: KEY_F1
+
+- from: KEY_2
+  to: KEY_F2
+
+- from: KEY_3
+  to: KEY_F3
+
+- from: KEY_4
+  to: KEY_F4
+
+- from: KEY_5
+  to: KEY_F5
+
+- from: KEY_6
+  to: KEY_F6
+
+- from: KEY_7
+  to: KEY_F7
+
+- from: KEY_8
+  to: KEY_F8
+
+- from: KEY_9
+  to: KEY_F9
+
+- from: KEY_0
+  to: KEY_F10
+
+- from: KEY_MINUS
+  to: KEY_F11
+
+- from: KEY_EQUAL
+  to: KEY_F12
+
+
+  # xf86 audio
+- from: KEY_M
+  to: KEY_MUTE
+
+- from: KEY_COMMA
+  to: KEY_VOLUMEDOWN
+
+- from: KEY_DOT
+  to: KEY_VOLUMEUP
+
+
+  # mouse navigation
+- from: BTN_LEFT
+  to: BTN_BACK
+
+- from: BTN_RIGHT
+  to: BTN_FORWARD
+
+  # FIXME: this is not working
+  # to: even though `wev` says keycode 99 is Print
+
+  # PrtSc -> Context Menu
+- from: KEY_SYSRQ
+  to: KEY_CONTEXT_MENU
