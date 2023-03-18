@@ -130,7 +130,7 @@ const auto DEFAULT_MAPPING = Mapping {
 };
 
 
-const auto syn = new Event{
+const auto SYN = Event {
   .time = {.tv_sec = 0, .tv_usec = 0},
   .type = EV_SYN,
   .code = SYN_REPORT,
@@ -182,7 +182,7 @@ auto writeCombo(KeyCode keycode) {
     .value = KEY_STROKE_UP
   };
 
-  writeEvents({key_down, *syn, key_up});
+  writeEvents({key_down, SYN, key_up});
 }
 
 // Intercepted key specification
@@ -303,7 +303,7 @@ protected:
           for (auto held_key_code : *_heldKeys) {
             auto held_key_up = buildEventUp(mapping[held_key_code]);
             held_keys_up.push_back(held_key_up);
-            held_keys_up.push_back(*syn);
+            held_keys_up.push_back(SYN);
           }
 
           writeEvents(held_keys_up);
@@ -362,8 +362,8 @@ protected:
         auto modifier_down = new Event(*input);
         modifier_down->code = _modifier;
 
-        // for some reason, need to push "syn" after modifier here
-        writeEvents({*modifier_down, *syn});
+        // for some reason, need to push "SYN" after modifier here
+        writeEvents({*modifier_down, SYN});
 
         _shouldEmitTapped = false;
         return true; // gotta emit input event independently so we can process layer+modifier+input together
