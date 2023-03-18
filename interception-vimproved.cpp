@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <fstream>
 #include <ranges>
+#include <sstream>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -11,6 +12,17 @@
 
 #include <yaml-cpp/yaml.h>
 
+auto log(const auto&... args) {
+  static auto logfile = std::ofstream {
+    "/tmp/log/interception-vimproved.log",
+    std::ios_base::app
+  };
+  logfile << "[LOG] ";
+  (logfile << ... << args) << std::endl;
+  logfile << std::flush;
+}
+
+class InterceptedKey;
 class InterceptedKeyModifier;
 class InterceptedKeyLayer;
 
@@ -19,7 +31,7 @@ using KeyCode = unsigned short;
 using Mapping = std::unordered_map<KeyCode, KeyCode>;
 using Layers = std::vector<InterceptedKeyLayer>;
 using Modifiers = std::vector<InterceptedKeyModifier>;
-
+using Intercepts = std::vector<InterceptedKey*>;
 // NOTE: modifier keys must go first because layerKey.processInterceptedHeld
 // emits mapped key as soon as the for loop calls layerKey.process..
 // if that process is run before modifierKey.process, the modifier key will
@@ -70,7 +82,7 @@ const auto KEYS = std::unordered_map<std::string, KeyCode> {
   KEY(KEY_LEFTSHIFT), KEY(KEY_Z), KEY(KEY_X), KEY(KEY_C), KEY(KEY_V), KEY(KEY_B), KEY(KEY_N),
     KEY(KEY_M), KEY(KEY_COMMA), KEY(KEY_DOT), KEY(KEY_SLASH), KEY(KEY_RIGHTSHIFT),
 
-  KEY(KEY_LEFTCTRL), KEY(KEY_LEFTALT), KEY(KEY_RIGHTALT), KEY(KEY_RIGHTCTRL),
+  KEY(KEY_LEFTCTRL), KEY(KEY_LEFTALT), KEY(KEY_SPACE), KEY(KEY_RIGHTALT), KEY(KEY_RIGHTCTRL),
 
   KEY(KEY_LEFT), KEY(KEY_DOWN), KEY(KEY_UP), KEY(KEY_RIGHT), KEY(KEY_PAGEDOWN), KEY(KEY_PAGEUP),
 
@@ -168,9 +180,6 @@ auto write_keytap(KeyCode code) {
 
 class InterceptedKey {
 public:
-  InterceptedKey(KeyCode intercept, KeyCode tapped)
-      : intercept{intercept}, tapped{tapped}, state{State::START}, shouldEmitTapped{true} {}
-
   auto process(Event *input) -> bool {
     switch (state) {
       case State::START: return processStart(input);
@@ -181,6 +190,9 @@ public:
   }
 
 protected:
+  InterceptedKey(KeyCode intercept, KeyCode tapped)
+      : intercept{intercept}, tapped{tapped}, state{State::START}, shouldEmitTapped{true} {}
+
   enum class State {START, INTERCEPTED_KEY_HELD, OTHER_KEY_HELD};
 
   auto processStart(Event *input) -> bool {
@@ -361,49 +373,109 @@ public:
   }
 };
 
-auto old_default_config() -> std::vector<InterceptedKey*> {
+auto default_config() -> Intercepts {
   auto caps = new InterceptedKeyModifier(KEY_CAPSLOCK, KEY_ESC, KEY_LEFTCTRL);
   auto enter = new InterceptedKeyModifier(KEY_ENTER, KEY_ENTER, KEY_RIGHTCTRL);
   auto space = new InterceptedKeyLayer(KEY_SPACE, KEY_SPACE, DEFAULT_MAPPING);
-  return std::vector<InterceptedKey*> { caps, enter, space };
+  return Intercepts{caps, enter, space};
 }
 
-auto default_config() -> Configuration {
-  return Configuration {
-    Modifiers {
-      InterceptedKeyModifier{KEY_CAPSLOCK, KEY_ESC, KEY_LEFTCTRL},
-      InterceptedKeyModifier{KEY_ENTER, KEY_ENTER, KEY_RIGHTCTRL},
-    },
-    Layers {
-      InterceptedKeyLayer{KEY_SPACE, KEY_SPACE, DEFAULT_MAPPING},
-    }
-  };
-}
-
-auto read_config_or_default(int argc, char** argv) -> Configuration {
+auto read_config_or_default(int argc, char** argv) -> Intercepts {
   if (argc < 2) return default_config();
-  // TODO: parse the new structured yaml
-  /* try { */
-  /*   auto mapping = Mapping{}; */
-  /*   for (const auto& item : YAML::LoadFile(argv[1])) { */
-  /*     auto from = KEYS.at(item["from"].as<std::string>()); */
-  /*     auto to = KEYS.at(item["to"].as<std::string>()); */
-  /*     mapping[from] = to; */
-  /*   } */
-  /*   return mapping; */
-  /* } catch (...) { */
-  /*   return DEFAULT_MAPPING; */
-  /* } */
+  try {
+    auto modifiers = Intercepts{};
+    auto layers = Intercepts{};
+
+    auto yaml_str = [&](auto yaml_item){
+      //TODO(WTF C++): "expected 'template' keyword before dependent template name"
+      // | (this is not necessary in the yaml manual)
+      // `-------------vvvvvvvv
+      return yaml_item.template as<std::string>();
+    };
+
+    auto read_mapping = [&](auto yaml_mapping) {
+      auto mapping = Mapping{};
+      for (const auto& item : yaml_mapping) {
+        auto from = KEYS.at(yaml_str(item["from"]));
+        auto to = KEYS.at(yaml_str(item["to"]));
+        mapping[from] = to;
+      }
+      return mapping;
+    };
+
+    auto read_intercept = [&](auto yaml_intercept) {
+      log("Reading intercept key...");
+      auto intercept = KEYS.at(yaml_str(yaml_intercept["intercept"]));
+      log("Read intercept key. key is: ", yaml_str(yaml_intercept["intercept"]));
+
+      auto ontap = [&]{
+        log("Reading ontap key...");
+        if (auto ontap = yaml_intercept["ontap"]) {
+          log("Read ontap key. key is: ", yaml_str(ontap));
+          try {
+            return KEYS.at(yaml_str(ontap));
+          } catch (const std::exception& e) {
+            log("invalid key: ", yaml_str(ontap));
+            auto ss = std::ostringstream();
+            ss << "invalid key: " << yaml_str(ontap);
+            throw std::invalid_argument(ss.str());
+          }
+        }
+        log("Read ontap key. key is same as intercept: ", yaml_str(yaml_intercept["intercept"]));
+        return intercept;
+      }();
+
+      log("Reading onhold key...");
+      if (auto onhold = yaml_intercept["onhold"]) {
+        log("Read onhold entry.");
+        log("Dispatching on type of onhold entry...");
+        if (onhold.IsSequence()) {
+          log("onhold is a sequence. Reading Mapping...");
+          // a layer key
+          auto mapping = read_mapping(onhold);
+          log("Read mapping.");
+          layers.push_back(new InterceptedKeyLayer{intercept, ontap, mapping});
+          return;
+        }
+        else if (onhold.IsScalar()) {
+          // a modifier key
+          log("onhold is a scalar. Reading modifier...");
+          auto modifier = KEYS.at(yaml_str(onhold));
+          log("Read modifier. modifier is ", yaml_str(onhold));
+          modifiers.push_back(new InterceptedKeyModifier{intercept, ontap, modifier});
+          return;
+        }
+        else {
+          // we do not support other types
+          log("Invalid Configuration: only scalar or sequence types allowed.");
+          throw std::invalid_argument("Invalid Configuration");
+        }
+      } else {
+        // TODO: treat empty `onhold` as a simple remapping (like caps2esc)
+        log("Invalid Configuration: Empty onhold not implemented");
+        throw std::invalid_argument("Invalid Configuration: Empty onhold not implemented");
+      }
+    };
+
+    log("Reading custom configuration...");
+    auto config = YAML::LoadFile(argv[1]);
+    log("Loaded yaml config.");
+    log("Reading intercepts...");
+    std::ranges::for_each(config, read_intercept);
+    log("Read intercepts.");
+    auto intercepts = Intercepts{};
+    std::ranges::copy(modifiers, std::back_inserter(intercepts));
+    std::ranges::copy(layers, std::back_inserter(intercepts));
+    return intercepts;
+  } catch (const std::exception& e) {
+    log("[ERROR] ", e.what());
+  }
   return default_config();
 }
 
 class Interceptor {
 public:
-  Interceptor(Configuration config)
-      : modifiers{config.modifiers},
-        layers{config.layers},
-        // TODO: get rid of this guy
-        intercepted_keys{old_default_config()} { }
+  Interceptor(Intercepts intercepts) : intercepts{intercepts} {}
 
   auto event_loop() -> void {
     while (auto input = read_event()) {
@@ -412,9 +484,7 @@ public:
   }
 
 private:
-  Modifiers modifiers;
-  Layers layers;
-  std::vector<InterceptedKey*> intercepted_keys;
+  Intercepts intercepts;
 
   auto intercept(Event input) -> void {
     if (input.type == EV_MSC && input.code == MSC_SCAN) return;
@@ -425,8 +495,8 @@ private:
 
   auto processed(Event input) -> bool {
     auto processed = true;
-    for (auto key : intercepted_keys) {
-      processed &= key->process(&input);
+    for (auto intercept : intercepts) {
+      processed &= intercept->process(&input);
     }
     return processed;
   }
@@ -435,5 +505,6 @@ private:
 auto main(int argc, char** argv) -> int {
   std::setbuf(stdin, NULL);
   std::setbuf(stdout, NULL);
+  /* Interceptor(read_config_or_default(argc, argv)); */
   Interceptor(read_config_or_default(argc, argv)).event_loop();
 }
