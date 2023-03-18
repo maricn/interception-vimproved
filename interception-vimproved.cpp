@@ -22,10 +22,6 @@ const auto KEY_STROKE_UP = 0;
 const auto KEY_STROKE_DOWN = 1;
 const auto KEY_STROKE_REPEAT = 2;
 
-// focus on key codes <= 0x151, covers most use cases including mouse buttons
-// see: github.com/torvalds/linux/blob/master/include/uapi/linux/input-event-codes.h
-const auto MAX_KEY = 0x151;
-
 const auto MODIFIERS = std::unordered_set<KeyCode> {
   KEY_LEFTSHIFT, KEY_RIGHTSHIFT, KEY_LEFTCTRL, KEY_RIGHTCTRL,
   KEY_LEFTALT, KEY_RIGHTALT, KEY_LEFTMETA, KEY_RIGHTMETA,
@@ -37,129 +33,53 @@ auto is_modifier(int key) -> bool {
   return MODIFIERS.contains(key);
 }
 
+// auxilliary renamings for accessibility
+const auto KEY_BACKTICK = KEY_GRAVE;
+// in the real world, braces = `{`, `}`, brackets: `[`, `]`
+const auto KEY_LEFTBRACKET = KEY_LEFTBRACE;
+const auto KEY_RIGHTBRACKET = KEY_RIGHTBRACE;
+// print screen
+const auto KEY_PRT_SC = KEY_SYSRQ;
+
+// all mappable keys (for now)
+// see: github.com/torvalds/linux/blob/master/include/uapi/linux/input-event-codes.h
 const auto KEYS = std::unordered_map<std::string, KeyCode> {
-// the following extra inner macro is not necessary as sometimes, like in stackoverflow.com/q/240353:
-// #define TO_STRING(X) #X
+// KEY(KEY_K) preprocesses to {"KEY_K", KEY_K}
+#define KEY(KEYCODE) {#KEYCODE, KEYCODE}
 
-// In our case, the Keycodes are preprocessing tokens already
-#define PAIR(K) { #K, K}
+  KEY(KEY_ESC), KEY(KEY_F1), KEY(KEY_F2), KEY(KEY_F3), KEY(KEY_F4), KEY(KEY_F5),
+    KEY(KEY_F6), KEY(KEY_F7), KEY(KEY_F8), KEY(KEY_F9), KEY(KEY_F10), KEY(KEY_F11), KEY(KEY_F12),
 
-  PAIR(KEY_E),
-  PAIR(KEY_ESC),
-  PAIR(KEY_D),
-  PAIR(KEY_DELETE),
-  PAIR(KEY_B),
-  PAIR(KEY_BACKSPACE),
-  PAIR(KEY_H),
-  PAIR(KEY_LEFT),
-  PAIR(KEY_J),
-  PAIR(KEY_DOWN),
-  PAIR(KEY_K),
-  PAIR(KEY_UP),
-  PAIR(KEY_L),
-  PAIR(KEY_RIGHT),
-  PAIR(KEY_Y),
-  PAIR(KEY_HOME),
-  PAIR(KEY_U),
-  PAIR(KEY_PAGEDOWN),
-  PAIR(KEY_I),
-  PAIR(KEY_PAGEUP),
-  PAIR(KEY_O),
-  PAIR(KEY_END),
-  PAIR(KEY_1),
-  PAIR(KEY_F1),
-  PAIR(KEY_2),
-  PAIR(KEY_F2),
-  PAIR(KEY_3),
-  PAIR(KEY_F3),
-  PAIR(KEY_4),
-  PAIR(KEY_F4),
-  PAIR(KEY_5),
-  PAIR(KEY_F5),
-  PAIR(KEY_6),
-  PAIR(KEY_F6),
-  PAIR(KEY_7),
-  PAIR(KEY_F7),
-  PAIR(KEY_8),
-  PAIR(KEY_F8),
-  PAIR(KEY_9),
-  PAIR(KEY_F9),
-  PAIR(KEY_0),
-  PAIR(KEY_F10),
-  PAIR(KEY_MINUS),
-  PAIR(KEY_F11),
-  PAIR(KEY_EQUAL),
-  PAIR(KEY_F12),
-  PAIR(KEY_M),
-  PAIR(KEY_MUTE),
-  PAIR(KEY_COMMA),
-  PAIR(KEY_VOLUMEDOWN),
-  PAIR(KEY_DOT),
-  PAIR(KEY_VOLUMEUP),
-  PAIR(BTN_LEFT),
-  PAIR(BTN_BACK),
-  PAIR(BTN_RIGHT),
-  PAIR(BTN_FORWARD),
-  PAIR(KEY_E),
-  PAIR(KEY_ESC),
-  PAIR(KEY_D),
-  PAIR(KEY_DELETE),
-  PAIR(KEY_B),
-  PAIR(KEY_BACKSPACE),
-  PAIR(KEY_H),
-  PAIR(KEY_LEFT),
-  PAIR(KEY_J),
-  PAIR(KEY_DOWN),
-  PAIR(KEY_K),
-  PAIR(KEY_UP),
-  PAIR(KEY_L),
-  PAIR(KEY_RIGHT),
-  PAIR(KEY_Y),
-  PAIR(KEY_HOME),
-  PAIR(KEY_U),
-  PAIR(KEY_PAGEDOWN),
-  PAIR(KEY_I),
-  PAIR(KEY_PAGEUP),
-  PAIR(KEY_O),
-  PAIR(KEY_END),
-  PAIR(KEY_1),
-  PAIR(KEY_F1),
-  PAIR(KEY_2),
-  PAIR(KEY_F2),
-  PAIR(KEY_3),
-  PAIR(KEY_F3),
-  PAIR(KEY_4),
-  PAIR(KEY_F4),
-  PAIR(KEY_5),
-  PAIR(KEY_F5),
-  PAIR(KEY_6),
-  PAIR(KEY_F6),
-  PAIR(KEY_7),
-  PAIR(KEY_F7),
-  PAIR(KEY_8),
-  PAIR(KEY_F8),
-  PAIR(KEY_9),
-  PAIR(KEY_F9),
-  PAIR(KEY_0),
-  PAIR(KEY_F10),
-  PAIR(KEY_MINUS),
-  PAIR(KEY_F11),
-  PAIR(KEY_EQUAL),
-  PAIR(KEY_F12),
-  PAIR(KEY_M),
-  PAIR(KEY_MUTE),
-  PAIR(KEY_COMMA),
-  PAIR(KEY_VOLUMEDOWN),
-  PAIR(KEY_DOT),
-  PAIR(KEY_VOLUMEUP),
-  PAIR(BTN_LEFT),
-  PAIR(BTN_BACK),
-  PAIR(BTN_RIGHT),
-  PAIR(BTN_FORWARD),
-  PAIR(KEY_SYSRQ),
-  PAIR(KEY_CONTEXT_MENU),
+  KEY(KEY_BACKTICK), KEY(KEY_1), KEY(KEY_2), KEY(KEY_3), KEY(KEY_4), KEY(KEY_5), KEY(KEY_6),
+    KEY(KEY_7), KEY(KEY_8), KEY(KEY_9), KEY(KEY_0), KEY(KEY_MINUS), KEY(KEY_EQUAL), KEY(KEY_BACKSPACE),
+ 
+  KEY(KEY_TAB), KEY(KEY_Q), KEY(KEY_W), KEY(KEY_E), KEY(KEY_R), KEY(KEY_T), KEY(KEY_Y),
+    KEY(KEY_U), KEY(KEY_I), KEY(KEY_O), KEY(KEY_P), KEY(KEY_LEFTBRACKET), KEY(KEY_RIGHTBRACKET), KEY(KEY_BACKSLASH),
 
-#undef PAIR
+  KEY(KEY_CAPSLOCK), KEY(KEY_A), KEY(KEY_S), KEY(KEY_D), KEY(KEY_F), KEY(KEY_G), KEY(KEY_H),
+    KEY(KEY_J), KEY(KEY_K), KEY(KEY_L), KEY(KEY_SEMICOLON), KEY(KEY_APOSTROPHE), KEY(KEY_ENTER),
+
+  KEY(KEY_LEFTSHIFT), KEY(KEY_Z), KEY(KEY_X), KEY(KEY_C), KEY(KEY_V), KEY(KEY_B), KEY(KEY_N),
+    KEY(KEY_M), KEY(KEY_COMMA), KEY(KEY_DOT), KEY(KEY_SLASH), KEY(KEY_RIGHTSHIFT),
+
+  KEY(KEY_LEFTCTRL), KEY(KEY_LEFTALT), KEY(KEY_RIGHTALT), KEY(KEY_RIGHTCTRL),
+
+  KEY(KEY_LEFT), KEY(KEY_DOWN), KEY(KEY_UP), KEY(KEY_RIGHT), KEY(KEY_PAGEDOWN), KEY(KEY_PAGEUP),
+
+  KEY(KEY_HOME), KEY(KEY_END), KEY(KEY_INSERT), KEY(KEY_DELETE),
+
+  // mouse buttons
+  KEY(BTN_LEFT), KEY(BTN_RIGHT), KEY(BTN_BACK), KEY(BTN_FORWARD),
+
+  // display brightness
+  KEY(KEY_BRIGHTNESSDOWN), KEY(KEY_BRIGHTNESSUP),
+
+  // audio
+  KEY(KEY_MUTE), KEY(KEY_VOLUMEDOWN), KEY(KEY_VOLUMEUP),
+
+  KEY(KEY_PRT_SC), KEY(KEY_CONTEXT_MENU), KEY(KEY_PRINT),
+
+#undef KEY
 };
 
 const auto DEFAULT_MAPPING = Mapping {
