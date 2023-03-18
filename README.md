@@ -10,6 +10,16 @@ My hideous (but working and performant) C++ code to remap the keys on any input 
 
 ## Requirements
 Basically any OS that works with `libevdev` (linux with kernel newer than 2.6.36), no matter what desktop environment, or even if any DE is used (yes, it works the same in X server instead of `xmodmap`, but also in plain terminal without graphical environment).
+For building, `meson` (and `ninja`), and `make`.
+At runtime, the `https://github.com/jbeder/yaml-cpp` YAML library.
+
+## Installation
+```bash
+$ git clone "https://github.com/maricn/interception-vimproved"
+$ cd interception-vimproved
+$ make
+$ sudo make install
+```
 
 ## Running
 Use it with a job specification for `udevmon` (from [Interception Tools](https://gitlab.com/interception/linux/tools)). I install the binary to `/opt/interception/interception-vimproved` and use it like the following on Arch linux on Thinkpad x1c gen7.
@@ -26,7 +36,18 @@ That matches any udev devices containing keyboard in the name (or my external TA
 Alternatively, you can run it with `udevmon` binary straight, just make sure to be negatively nice (`nice -n -20 udevmon -c /etc/udevmon.yml`) so your input is always available.
 
 ### Configuration
-Currently, there's no config file, but if you want to experiment with adding/removing/changing the mappings, take a look at the bottom of the ./interception-vimproved.cpp - `initInterceptedKeys` function has comments to guide you. Remember to `make` the project and replace the binary (or point to the new one from your udevmon config).
+If you want to customize the functionality, you can take a look at the [`config.yaml`](./config.yaml)
+Assuming you store your config at the path `/path/to/config.yaml`, when you are done customizing, you can use that config by updating your `/etc/interception/udevmon.yaml`:
+```yaml
+...
+- JOB:
+    - |
+      intercept -g $DEVNODE \
+        | /opt/interception/interception-vimproved /path/to/config.yaml \
+        | uinput -d $DEVNODE
+...
+```
+
 
 ### Testing
 In case you want to edit the source code, kill the `udevmon` daemon, and manually try the following to avoid getting stuck with broken input. Trust me, you can get yourself in a dead end situation easily.
