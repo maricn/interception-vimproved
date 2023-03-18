@@ -2,9 +2,9 @@
 #include <fstream>
 #include <iostream>
 #include <ranges>
-#include <set>
 #include <sstream>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #include <cstdlib>
 
@@ -16,7 +16,7 @@
 
 using Event = input_event;
 using KeyCode = unsigned short;
-using Mapping = std::pair<KeyCode, KeyCode>;
+using Mapping = std::unordered_map<KeyCode, KeyCode>;
 
 const auto KEY_STROKE_UP = 0;
 const auto KEY_STROKE_DOWN = 1;
@@ -25,6 +25,17 @@ const auto KEY_STROKE_REPEAT = 2;
 // focus on key codes <= 0x151, covers most use cases including mouse buttons
 // see: github.com/torvalds/linux/blob/master/include/uapi/linux/input-event-codes.h
 const auto MAX_KEY = 0x151;
+
+const auto MODIFIERS = std::unordered_set<KeyCode> {
+  KEY_LEFTSHIFT, KEY_RIGHTSHIFT, KEY_LEFTCTRL, KEY_RIGHTCTRL,
+  KEY_LEFTALT, KEY_RIGHTALT, KEY_LEFTMETA, KEY_RIGHTMETA,
+  // TODO: handle capslock as not modifier?
+  KEY_CAPSLOCK,
+};
+
+auto is_modifier(int key) -> bool {
+  return MODIFIERS.contains(key);
+}
 
 const auto KEYS = std::unordered_map<std::string, KeyCode> {
 // the following extra inner macro is not necessary as sometimes, like in stackoverflow.com/q/240353:
@@ -151,7 +162,7 @@ const auto KEYS = std::unordered_map<std::string, KeyCode> {
 #undef PAIR
 };
 
-const auto DEFAULT_MAPPINGS = std::vector<Mapping>{
+const auto DEFAULT_MAPPING = Mapping {
   // special chars
   {KEY_E, KEY_ESC},
   {KEY_D, KEY_DELETE},
@@ -188,54 +199,16 @@ const auto DEFAULT_MAPPINGS = std::vector<Mapping>{
   {KEY_COMMA, KEY_VOLUMEDOWN},
   {KEY_DOT, KEY_VOLUMEUP},
 
+  // FIXME: these never did anything even in original src tree (thinkpad x1 yoga)
   // mouse navigation
   {BTN_LEFT, BTN_BACK},
   {BTN_RIGHT, BTN_FORWARD},
 
-  // special chars
-  {KEY_E, KEY_ESC},
-  {KEY_D, KEY_DELETE},
-  {KEY_B, KEY_BACKSPACE},
-
-  // vim home row
-  {KEY_H, KEY_LEFT},
-  {KEY_J, KEY_DOWN},
-  {KEY_K, KEY_UP},
-  {KEY_L, KEY_RIGHT},
-
-  // vim above home row
-  {KEY_Y, KEY_HOME},
-  {KEY_U, KEY_PAGEDOWN},
-  {KEY_I, KEY_PAGEUP},
-  {KEY_O, KEY_END},
-
-  // number row to F keys
-  {KEY_1, KEY_F1},
-  {KEY_2, KEY_F2},
-  {KEY_3, KEY_F3},
-  {KEY_4, KEY_F4},
-  {KEY_5, KEY_F5},
-  {KEY_6, KEY_F6},
-  {KEY_7, KEY_F7},
-  {KEY_8, KEY_F8},
-  {KEY_9, KEY_F9},
-  {KEY_0, KEY_F10},
-  {KEY_MINUS, KEY_F11},
-  {KEY_EQUAL, KEY_F12},
-
-  // xf86 audio
-  {KEY_M, KEY_MUTE},
-  {KEY_COMMA, KEY_VOLUMEDOWN},
-  {KEY_DOT, KEY_VOLUMEUP},
-
-  // mouse navigation
-  {BTN_LEFT, BTN_BACK},
-  {BTN_RIGHT, BTN_FORWARD},
-
-  // FIXME: this is not working, even though `wev` says keycode 99 is Print
   // PrtSc -> Context Menu
-  {KEY_SYSRQ, KEY_CONTEXT_MENU}
+  // FIXME: this is not working, even though `wev` says keycode 99 is Print
+  // {KEY_SYSRQ, KEY_CONTEXT_MENU},
 };
+
 
 const auto syn = new Event{
   .time = {.tv_sec = 0, .tv_usec = 0},
@@ -297,22 +270,6 @@ class InterceptedKey {
 public:
   enum class State{START, INTERCEPTED_KEY_HELD, OTHER_KEY_HELD};
 
-  static auto isModifier(int key) -> int {
-    switch (key) {
-      default: return 0;
-      case KEY_LEFTSHIFT:
-      case KEY_RIGHTSHIFT:
-      case KEY_LEFTCTRL:
-      case KEY_RIGHTCTRL:
-      case KEY_LEFTALT:
-      case KEY_RIGHTALT:
-      case KEY_LEFTMETA:
-      case KEY_RIGHTMETA:
-      // TODO: handle capslock as not modifier?
-      case KEY_CAPSLOCK: return 1;
-    }
-  }
-
   InterceptedKey(KeyCode intercepted, KeyCode tapped)
     :_intercepted{intercepted}, _tapped{tapped} { }
 
@@ -350,14 +307,13 @@ protected:
 
 class InterceptedKeyLayer : public InterceptedKey {
 private:
-  KeyCode* _map;
-  std::set<KeyCode>* _heldKeys = new std::set<KeyCode>();
+  Mapping mapping;
+  std::unordered_set<KeyCode>* _heldKeys = new std::unordered_set<KeyCode>();
 
 protected:
-  auto map(Event* input) -> Event {
-    auto result = *input;
-    result.code = _map[input->code];
-    return result;
+  auto remapped(Event input) -> Event {
+    input.code = mapping[input.code];
+    return input;
   }
 
   auto processInterceptedHeld(Event *input) -> bool override {
@@ -386,11 +342,11 @@ protected:
       // keypress, we can type faster because only in case of mapped key down,
       // the intercepted key will not be emitted - useful for scenario:
       // L_DOWN, SPACE_DOWN, A_DOWN, L_UP, A_UP, SPACE_UP
-      _shouldEmitTapped &= !hasMapped(input->code) && !InterceptedKey::isModifier(input->code);
+      _shouldEmitTapped &= !hasMapped(input->code) && !is_modifier(input->code);
 
       if (hasMapped(input->code)) {
         _heldKeys->insert(input->code);
-        auto mapped = map(input);
+        auto mapped = remapped(*input);
         writeEvent(&mapped);
         _state = InterceptedKey::State::OTHER_KEY_HELD;
         return false;
@@ -413,7 +369,7 @@ protected:
     if (input->value == KEY_STROKE_UP) {
       // one of mapped held keys goes up
       if (_heldKeys->find(input->code) != _heldKeys->end()) {
-        auto mapped = map(input);
+        auto mapped = remapped(*input);
         writeEvent(&mapped);
         _heldKeys->erase(input->code);
         if (_heldKeys->empty()) {
@@ -425,7 +381,7 @@ protected:
         if (matches(input->code)) {
           auto held_keys_up = std::vector<Event>{};
           for (auto held_key_code : *_heldKeys) {
-            auto held_key_up = buildEventUp(_map[held_key_code]);
+            auto held_key_up = buildEventUp(mapping[held_key_code]);
             held_keys_up.push_back(held_key_up);
             held_keys_up.push_back(*syn);
           }
@@ -438,7 +394,7 @@ protected:
       }
     } else { // KEY_STROKE_DOWN or KEY_STROKE_REPEAT
       if (hasMapped(input->code)) {
-        auto mapped = map(input);
+        auto mapped = remapped(*input);
         writeEvent(&mapped);
         if (input->value == KEY_STROKE_DOWN) {
           _heldKeys->insert(input->code);
@@ -450,19 +406,10 @@ protected:
   }
 
 public:
-  InterceptedKeyLayer(KeyCode intercepted, KeyCode tapped):
-    InterceptedKey(intercepted, tapped), _map{new KeyCode[MAX_KEY]{0}} {}
+  InterceptedKeyLayer(KeyCode intercepted, KeyCode tapped, Mapping mapping)
+    : InterceptedKey{intercepted, tapped}, mapping{mapping} {}
 
-  ~InterceptedKeyLayer() { delete _map; }
-
-
-  auto add_mappings(const std::vector<Mapping>& mappings) {
-    for (const auto& [from, to] : mappings) {
-      _map[from] = to;
-    }
-  }
-
-  auto hasMapped(KeyCode from) -> bool { return _map[from] != 0; }
+  auto hasMapped(KeyCode key) -> bool { return mapping.contains(key); }
 };
 
 class InterceptedKeyModifier : public InterceptedKey {
@@ -510,17 +457,16 @@ protected:
 
 public:
   InterceptedKeyModifier(KeyCode intercepted, KeyCode tapped, KeyCode modifier) : InterceptedKey(intercepted, tapped) {
-    if (!InterceptedKey::isModifier(modifier)) {
+    if (!is_modifier(modifier)) {
       throw std::invalid_argument("Specified wrong modifier key");
     }
     _modifier = modifier;
   }
 };
 
-auto initInterceptedKeys(const std::vector<Mapping>& mappings) -> std::vector<InterceptedKey*> {
+auto initInterceptedKeys(const Mapping& mapping) -> std::vector<InterceptedKey*> {
   // tap space for space, hold for layer mapping
-  auto space = new InterceptedKeyLayer(KEY_SPACE, KEY_SPACE);
-  space->add_mappings(mappings);
+  auto space = new InterceptedKeyLayer(KEY_SPACE, KEY_SPACE, mapping);
 
   // tap caps for esc, hold for ctrl
   auto caps = new InterceptedKeyModifier(KEY_CAPSLOCK, KEY_ESC, KEY_LEFTCTRL);
@@ -536,19 +482,18 @@ auto initInterceptedKeys(const std::vector<Mapping>& mappings) -> std::vector<In
   return interceptedKeys;
 }
 
-auto read_mappings_or_default(int argc, char** argv) -> std::vector<Mapping> {
-  if (argc < 2) return DEFAULT_MAPPINGS;
+auto read_mapping_or_default(int argc, char** argv) -> Mapping {
+  if (argc < 2) return DEFAULT_MAPPING;
   try {
-    auto config = YAML::LoadFile(argv[1]);
-    auto mappings = std::vector<Mapping>();
-    for (const auto& mapping : config) {
-      auto from = KEYS.at(mapping["from"].as<std::string>());
-      auto to = KEYS.at(mapping["to"].as<std::string>());
-      mappings.push_back({from, to});
+    auto mapping = Mapping{};
+    for (const auto& item : YAML::LoadFile(argv[1])) {
+      auto from = KEYS.at(item["from"].as<std::string>());
+      auto to = KEYS.at(item["to"].as<std::string>());
+      mapping[from] = to;
     }
-    return mappings;
+    return mapping;
   } catch (...) {
-    return DEFAULT_MAPPINGS;
+    return DEFAULT_MAPPING;
   }
 }
 
@@ -556,7 +501,7 @@ auto main(int argc, char** argv) -> int {
   std::setbuf(stdin, NULL);
   std::setbuf(stdout, NULL);
 
-  auto intercepted_keys = initInterceptedKeys(read_mappings_or_default(argc, argv));
+  auto intercepted_keys = initInterceptedKeys(read_mapping_or_default(argc, argv));
 
   auto process_intercepted_keys = [&](auto input) {
     return std::ranges::all_of(intercepted_keys, [&](auto k){return k->process(input);});
