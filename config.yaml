@@ -1,11 +1,12 @@
 - intercept: KEY_CAPSLOCK
-  ontap: KEY_ESCAPE
+  ontap: KEY_ESC
   onhold: KEY_LEFTCTRL
 
 - intercept: KEY_ENTER
-  # not necessary: ontap: KEY_ENTER
+  # not necessary: ontap: KEY_ENTER is inferred if left empty
   onhold: KEY_RIGHTCTRL
 
+# this is a layer. hold space (onhold) contains several remappings
 - intercept: KEY_SPACE
   onhold:
 
