@@ -1,14 +1,11 @@
 #include <algorithm>
 #include <fstream>
-#include <iostream>
 #include <ranges>
-#include <sstream>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
 #include <cstdlib>
 
-#include <unistd.h>
 #include <filesystem>
 #include <linux/input.h>
 
@@ -133,7 +130,7 @@ auto key_event(int value, KeyCode code, KeyCode type=EV_KEY) -> Event {
   return {.time={.tv_sec=0, .tv_usec=0}, .type=type, .code=code, .value=value};
 }
 
-const auto SYN = key_event(KEY_STROKE_UP, SYN_REPORT, EV_SYN);
+const auto SYNC = key_event(KEY_STROKE_UP, SYN_REPORT, EV_SYN);
 
 auto read_event() -> std::optional<Event> {
   if (auto event = Event{}; std::fread(&event, sizeof(Event), 1, stdin) == 1) {
@@ -155,22 +152,16 @@ auto write_events(const std::vector<Event>& events) {
 }
 
 auto write_keytap(KeyCode code) {
-  write_events({key_event(KEY_STROKE_DOWN, code), SYN, key_event(KEY_STROKE_UP, code)});
+  write_events({key_event(KEY_STROKE_DOWN, code), SYNC, key_event(KEY_STROKE_UP, code)});
 }
 
 class InterceptedKey {
 public:
-  enum class State {START, INTERCEPTED_KEY_HELD, OTHER_KEY_HELD};
-
-  InterceptedKey(KeyCode intercepted, KeyCode tapped)
-    :_intercepted{intercepted}, _tapped{tapped} { }
-
-  auto matches(KeyCode code) -> bool { return _intercepted == code; }
-
-  auto getState() -> State { return _state; }
+  InterceptedKey(KeyCode intercept, KeyCode tapped)
+      : intercept{intercept}, tapped{tapped}, state{State::START}, shouldEmitTapped{true} { }
 
   auto process(Event *input) -> bool {
-    switch (_state) {
+    switch (state) {
       case State::START: return processStart(input);
       case State::INTERCEPTED_KEY_HELD: return processInterceptedHeld(input);
       case State::OTHER_KEY_HELD: return processOtherKeyHeld(input);
@@ -179,28 +170,32 @@ public:
   }
 
 protected:
+  enum class State {START, INTERCEPTED_KEY_HELD, OTHER_KEY_HELD};
+
   auto processStart(Event *input) -> bool {
-    if (matches(input->code) && input->value == KEY_STROKE_DOWN) {
-      _shouldEmitTapped = true;
-      _state = State::INTERCEPTED_KEY_HELD;
+    if (is_intercept(input->code) && input->value == KEY_STROKE_DOWN) {
+      shouldEmitTapped = true;
+      state = State::INTERCEPTED_KEY_HELD;
       return false;
     }
     return true;
   };
 
+  auto is_intercept(KeyCode code) -> bool { return intercept == code; }
+
   virtual auto processInterceptedHeld(Event* input) -> bool = 0;
   virtual auto processOtherKeyHeld(Event* input) -> bool = 0;
 
-  KeyCode _intercepted;
-  KeyCode _tapped;
-  State _state;
-  bool _shouldEmitTapped = true;
+  KeyCode intercept;
+  KeyCode tapped;
+  State state;
+  bool shouldEmitTapped;
 };
 
 class InterceptedKeyLayer : public InterceptedKey {
 private:
   Mapping mapping;
-  std::unordered_set<KeyCode>* _heldKeys = new std::unordered_set<KeyCode>();
+  std::unordered_set<KeyCode>* held_keys = new std::unordered_set<KeyCode>();
 
 protected:
   auto remapped(Event input) -> Event {
@@ -209,38 +204,38 @@ protected:
   }
 
   auto processInterceptedHeld(Event *input) -> bool override {
-    if (matches(input->code) && input->value != KEY_STROKE_UP) {
+    if (is_intercept(input->code) && input->value != KEY_STROKE_UP) {
       return false; // don't emit anything
     }
 
-    if (matches(input->code)) { // && stroke up
+    if (is_intercept(input->code)) { // && stroke up
       // TODO: find a way to have a mouse click mark the key as intercepted
       // or just make it time based
-      // _shouldEmitTapped &= mouse clicked || timeout;
+      // shouldEmitTapped &= mouse clicked || timeout;
 
-      if (_shouldEmitTapped) {
-        write_keytap(_tapped);
-        _shouldEmitTapped = false;
+      if (shouldEmitTapped) {
+        write_keytap(tapped);
+        shouldEmitTapped = false;
       }
 
-      _state = State::START;
+      state = State::START;
       return false;
     }
 
     if (input->value == KEY_STROKE_DOWN) {
       // any other key
 
-      // NOTE: if we don't blindly set _shouldEmitTapped to false on any
+      // NOTE: if we don't blindly set shouldEmitTapped to false on any
       // keypress, we can type faster because only in case of mapped key down,
       // the intercepted key will not be emitted - useful for scenario:
       // L_DOWN, SPACE_DOWN, A_DOWN, L_UP, A_UP, SPACE_UP
-      _shouldEmitTapped &= !hasMapped(input->code) && !is_modifier(input->code);
+      shouldEmitTapped &= !hasMapped(input->code) && !is_modifier(input->code);
 
       if (hasMapped(input->code)) {
-        _heldKeys->insert(input->code);
+        held_keys->insert(input->code);
         auto mapped = remapped(*input);
         write_event(mapped);
-        _state = InterceptedKey::State::OTHER_KEY_HELD;
+        state = InterceptedKey::State::OTHER_KEY_HELD;
         return false;
       }
     }
@@ -249,38 +244,38 @@ protected:
   }
 
   auto processOtherKeyHeld(Event *input) -> bool override {
-    if (input->code == _intercepted && input->value != KEY_STROKE_UP) {
+    if (input->code == intercept && input->value != KEY_STROKE_UP) {
       return false;
     }
     if (input->value == KEY_STROKE_DOWN
-        && _heldKeys->find(input->code) != _heldKeys->end()) {
+        && held_keys->find(input->code) != held_keys->end()) {
       return false;
     }
 
     auto shouldEmitInput = true;
     if (input->value == KEY_STROKE_UP) {
       // one of mapped held keys goes up
-      if (_heldKeys->find(input->code) != _heldKeys->end()) {
+      if (held_keys->find(input->code) != held_keys->end()) {
         auto mapped = remapped(*input);
         write_event(mapped);
-        _heldKeys->erase(input->code);
-        if (_heldKeys->empty()) {
-          _state = InterceptedKey::State::INTERCEPTED_KEY_HELD;
+        held_keys->erase(input->code);
+        if (held_keys->empty()) {
+          state = InterceptedKey::State::INTERCEPTED_KEY_HELD;
         }
         shouldEmitInput = false;
       } else {
         // key that was not mapped & held goes up
-        if (matches(input->code)) {
+        if (is_intercept(input->code)) {
           auto held_keys_up = std::vector<Event>{};
-          for (auto held_key_code : *_heldKeys) {
+          for (auto held_key_code : *held_keys) {
             auto held_key_up = key_event(KEY_STROKE_UP, mapping[held_key_code]);
             held_keys_up.push_back(held_key_up);
-            held_keys_up.push_back(SYN);
+            held_keys_up.push_back(SYNC);
           }
 
           write_events(held_keys_up);
-          _heldKeys->clear();
-          _state = InterceptedKey::State::START;
+          held_keys->clear();
+          state = InterceptedKey::State::START;
           shouldEmitInput = false;
         }
       }
@@ -289,7 +284,7 @@ protected:
         auto mapped = remapped(*input);
         write_event(mapped);
         if (input->value == KEY_STROKE_DOWN) {
-          _heldKeys->insert(input->code);
+          held_keys->insert(input->code);
         }
         shouldEmitInput = false;
       }
@@ -298,45 +293,45 @@ protected:
   }
 
 public:
-  InterceptedKeyLayer(KeyCode intercepted, KeyCode tapped, Mapping mapping)
-    : InterceptedKey{intercepted, tapped}, mapping{mapping} {}
+  InterceptedKeyLayer(KeyCode intercept, KeyCode tapped, Mapping mapping)
+      : InterceptedKey{intercept, tapped}, mapping{mapping} {}
 
   auto hasMapped(KeyCode key) -> bool { return mapping.contains(key); }
 };
 
 class InterceptedKeyModifier : public InterceptedKey {
 protected:
-  KeyCode _modifier;
+  KeyCode modifier;
 
   bool processInterceptedHeld(Event *input) override {
-    if (matches(input->code) && input->value != KEY_STROKE_UP) {
+    if (is_intercept(input->code) && input->value != KEY_STROKE_UP) {
       return false;
     }
 
     bool shouldEmitInput = true;
-    if (matches(input->code)) { // && stroke up
-      if (_shouldEmitTapped) {
-        write_keytap(_tapped);
+    if (is_intercept(input->code)) { // && stroke up
+      if (shouldEmitTapped) {
+        write_keytap(tapped);
       } else { // intercepted is mapped to modifier and key stroke up
         Event modifier_up = *input;
-        modifier_up.code = _modifier;
+        modifier_up.code = modifier;
         write_event(modifier_up);
       }
 
-      _state = State::START;
+      state = State::START;
       return false;
     }
 
     if (input->value == KEY_STROKE_DOWN) { // any other than intercepted
-      if (_shouldEmitTapped) { // on first non-matching input after a
+      if (shouldEmitTapped) { // on first non-matching input after a
                                      // matching input
         auto modifier_down = new Event(*input);
-        modifier_down->code = _modifier;
+        modifier_down->code = modifier;
 
-        // for some reason, need to push "SYN" after modifier here
-        write_events({*modifier_down, SYN});
+        // for some reason, need to push "SYNC" after modifier here
+        write_events({*modifier_down, SYNC});
 
-        _shouldEmitTapped = false;
+        shouldEmitTapped = false;
         return true; // gotta emit input event independently so we can process layer+modifier+input together
       }
     }
@@ -344,14 +339,14 @@ protected:
     return shouldEmitInput;
   }
 
-  auto processOtherKeyHeld([[maybe_unused]] Event *input) -> bool override { return true; }
+  auto processOtherKeyHeld([[maybe_unused]] Event *_) -> bool override { return true; }
 
 public:
-  InterceptedKeyModifier(KeyCode intercepted, KeyCode tapped, KeyCode modifier) : InterceptedKey(intercepted, tapped) {
+  InterceptedKeyModifier(KeyCode intercept, KeyCode tapped, KeyCode modifier)
+      : InterceptedKey{intercept, tapped}, modifier{modifier} {
     if (!is_modifier(modifier)) {
       throw std::invalid_argument("Specified wrong modifier key");
     }
-    _modifier = modifier;
   }
 };
 
