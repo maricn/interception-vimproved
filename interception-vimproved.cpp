@@ -11,9 +11,20 @@
 
 #include <yaml-cpp/yaml.h>
 
+class InterceptedKeyModifier;
+class InterceptedKeyLayer;
+
 using Event = input_event;
 using KeyCode = unsigned short;
 using Mapping = std::unordered_map<KeyCode, KeyCode>;
+using Layers = std::vector<InterceptedKeyLayer>;
+using Modifiers = std::vector<InterceptedKeyModifier>;
+
+// NOTE: modifier keys must go first because layerKey.processInterceptedHeld
+// emits mapped key as soon as the for loop calls layerKey.process..
+// if that process is run before modifierKey.process, the modifier key will
+// not be emitted
+struct Configuration {Modifiers modifiers; Layers layers;};
 
 const auto KEY_STROKE_UP = 0;
 const auto KEY_STROKE_DOWN = 1;
@@ -158,7 +169,7 @@ auto write_keytap(KeyCode code) {
 class InterceptedKey {
 public:
   InterceptedKey(KeyCode intercept, KeyCode tapped)
-      : intercept{intercept}, tapped{tapped}, state{State::START}, shouldEmitTapped{true} { }
+      : intercept{intercept}, tapped{tapped}, state{State::START}, shouldEmitTapped{true} {}
 
   auto process(Event *input) -> bool {
     switch (state) {
@@ -350,57 +361,79 @@ public:
   }
 };
 
-auto initInterceptedKeys(const Mapping& mapping) -> std::vector<InterceptedKey*> {
-  // tap space for space, hold for layer mapping
-  auto space = new InterceptedKeyLayer(KEY_SPACE, KEY_SPACE, mapping);
-
-  // tap caps for esc, hold for ctrl
+auto old_default_config() -> std::vector<InterceptedKey*> {
   auto caps = new InterceptedKeyModifier(KEY_CAPSLOCK, KEY_ESC, KEY_LEFTCTRL);
-
-  // tap enter for enter, hold for ctrl
   auto enter = new InterceptedKeyModifier(KEY_ENTER, KEY_ENTER, KEY_RIGHTCTRL);
-
-  // NOTE: modifier keys must go first because layerKey.processInterceptedHeld
-  // emits mapped key as soon as the for loop calls layerKey.process..
-  // if that process is run before modifierKey.process, the modifier key will
-  // not be emitted
-  auto interceptedKeys = std::vector<InterceptedKey*>{caps, enter, space};
-  return interceptedKeys;
+  auto space = new InterceptedKeyLayer(KEY_SPACE, KEY_SPACE, DEFAULT_MAPPING);
+  return std::vector<InterceptedKey*> { caps, enter, space };
 }
 
-auto read_mapping_or_default(int argc, char** argv) -> Mapping {
-  if (argc < 2) return DEFAULT_MAPPING;
-  try {
-    auto mapping = Mapping{};
-    for (const auto& item : YAML::LoadFile(argv[1])) {
-      auto from = KEYS.at(item["from"].as<std::string>());
-      auto to = KEYS.at(item["to"].as<std::string>());
-      mapping[from] = to;
+auto default_config() -> Configuration {
+  return Configuration {
+    Modifiers {
+      InterceptedKeyModifier{KEY_CAPSLOCK, KEY_ESC, KEY_LEFTCTRL},
+      InterceptedKeyModifier{KEY_ENTER, KEY_ENTER, KEY_RIGHTCTRL},
+    },
+    Layers {
+      InterceptedKeyLayer{KEY_SPACE, KEY_SPACE, DEFAULT_MAPPING},
     }
-    return mapping;
-  } catch (...) {
-    return DEFAULT_MAPPING;
-  }
+  };
 }
+
+auto read_config_or_default(int argc, char** argv) -> Configuration {
+  if (argc < 2) return default_config();
+  // TODO: parse the new structured yaml
+  /* try { */
+  /*   auto mapping = Mapping{}; */
+  /*   for (const auto& item : YAML::LoadFile(argv[1])) { */
+  /*     auto from = KEYS.at(item["from"].as<std::string>()); */
+  /*     auto to = KEYS.at(item["to"].as<std::string>()); */
+  /*     mapping[from] = to; */
+  /*   } */
+  /*   return mapping; */
+  /* } catch (...) { */
+  /*   return DEFAULT_MAPPING; */
+  /* } */
+  return default_config();
+}
+
+class Interceptor {
+public:
+  Interceptor(Configuration config)
+      : modifiers{config.modifiers},
+        layers{config.layers},
+        // TODO: get rid of this guy
+        intercepted_keys{old_default_config()} { }
+
+  auto event_loop() -> void {
+    while (auto input = read_event()) {
+      intercept(*input);
+    }
+  }
+
+private:
+  Modifiers modifiers;
+  Layers layers;
+  std::vector<InterceptedKey*> intercepted_keys;
+
+  auto intercept(Event input) -> void {
+    if (input.type == EV_MSC && input.code == MSC_SCAN) return;
+    if (input.type != EV_KEY || processed(input)) {
+      write_event(input);
+    }
+  }
+
+  auto processed(Event input) -> bool {
+    auto processed = true;
+    for (auto key : intercepted_keys) {
+      processed &= key->process(&input);
+    }
+    return processed;
+  }
+};
 
 auto main(int argc, char** argv) -> int {
   std::setbuf(stdin, NULL);
   std::setbuf(stdout, NULL);
-
-  auto intercepted_keys = initInterceptedKeys(read_mapping_or_default(argc, argv));
-
-  auto process_intercepted_keys = [&](auto input) {
-    auto processed = true;
-    for (auto key : intercepted_keys) {
-      processed &= key->process(input);
-    }
-    return processed;
-  };
-
-  while (auto input = read_event()) {
-    if (input->type == EV_MSC && input->code == MSC_SCAN) continue;
-    if (input->type != EV_KEY || process_intercepted_keys(&*input)) {
-      write_event(*input);
-    }
-  }
+  Interceptor(read_config_or_default(argc, argv)).event_loop();
 }
