@@ -135,24 +135,27 @@ auto key_event(int value, KeyCode code, KeyCode type=EV_KEY) -> Event {
 
 const auto SYN = key_event(KEY_STROKE_UP, SYN_REPORT, EV_SYN);
 
-auto readEvent(Event *e) -> int {
-  return std::fread(e, sizeof(Event), 1, stdin) == 1;
+auto read_event() -> std::optional<Event> {
+  if (auto event = Event{}; std::fread(&event, sizeof(Event), 1, stdin) == 1) {
+    return event;
+  }
+  return {};
 }
 
-auto writeEvent(const Event *event) {
-  if (std::fwrite(event, sizeof(Event), 1, stdout) != 1) {
+auto write_event(Event event) {
+  if (std::fwrite(&event, sizeof(Event), 1, stdout) != 1) {
     std::exit(EXIT_FAILURE);
   }
 }
 
-auto writeEvents(const std::vector<Event>& events) {
+auto write_events(const std::vector<Event>& events) {
   if (std::fwrite(events.data(), sizeof(Event), events.size(), stdout) != events.size()) {
     std::exit(EXIT_FAILURE);
   }
 }
 
-auto writeCombo(KeyCode code) {
-  writeEvents({key_event(KEY_STROKE_DOWN, code), SYN, key_event(KEY_STROKE_UP, code)});
+auto write_keytap(KeyCode code) {
+  write_events({key_event(KEY_STROKE_DOWN, code), SYN, key_event(KEY_STROKE_UP, code)});
 }
 
 class InterceptedKey {
@@ -216,7 +219,7 @@ protected:
       // _shouldEmitTapped &= mouse clicked || timeout;
 
       if (_shouldEmitTapped) {
-        writeCombo(_tapped);
+        write_keytap(_tapped);
         _shouldEmitTapped = false;
       }
 
@@ -236,7 +239,7 @@ protected:
       if (hasMapped(input->code)) {
         _heldKeys->insert(input->code);
         auto mapped = remapped(*input);
-        writeEvent(&mapped);
+        write_event(mapped);
         _state = InterceptedKey::State::OTHER_KEY_HELD;
         return false;
       }
@@ -259,7 +262,7 @@ protected:
       // one of mapped held keys goes up
       if (_heldKeys->find(input->code) != _heldKeys->end()) {
         auto mapped = remapped(*input);
-        writeEvent(&mapped);
+        write_event(mapped);
         _heldKeys->erase(input->code);
         if (_heldKeys->empty()) {
           _state = InterceptedKey::State::INTERCEPTED_KEY_HELD;
@@ -275,7 +278,7 @@ protected:
             held_keys_up.push_back(SYN);
           }
 
-          writeEvents(held_keys_up);
+          write_events(held_keys_up);
           _heldKeys->clear();
           _state = InterceptedKey::State::START;
           shouldEmitInput = false;
@@ -284,7 +287,7 @@ protected:
     } else { // KEY_STROKE_DOWN or KEY_STROKE_REPEAT
       if (hasMapped(input->code)) {
         auto mapped = remapped(*input);
-        writeEvent(&mapped);
+        write_event(mapped);
         if (input->value == KEY_STROKE_DOWN) {
           _heldKeys->insert(input->code);
         }
@@ -313,12 +316,11 @@ protected:
     bool shouldEmitInput = true;
     if (matches(input->code)) { // && stroke up
       if (_shouldEmitTapped) {
-        writeCombo(_tapped);
+        write_keytap(_tapped);
       } else { // intercepted is mapped to modifier and key stroke up
-        Event *modifier_up = new Event(*input);
-        modifier_up->code = _modifier;
-        writeEvent(modifier_up);
-        delete modifier_up;
+        Event modifier_up = *input;
+        modifier_up.code = _modifier;
+        write_event(modifier_up);
       }
 
       _state = State::START;
@@ -332,7 +334,7 @@ protected:
         modifier_down->code = _modifier;
 
         // for some reason, need to push "SYN" after modifier here
-        writeEvents({*modifier_down, SYN});
+        write_events({*modifier_down, SYN});
 
         _shouldEmitTapped = false;
         return true; // gotta emit input event independently so we can process layer+modifier+input together
@@ -396,10 +398,10 @@ auto main(int argc, char** argv) -> int {
     return std::ranges::all_of(intercepted_keys, [&](auto k){return k->process(input);});
   };
 
-  for (auto input = Event(); readEvent(&input);) {
-    if (input.type == EV_MSC && input.code == MSC_SCAN) continue;
-    if (input.type != EV_KEY || process_intercepted_keys(&input)) {
-      writeEvent(&input);
+  while (auto input = read_event()) {
+    if (input->type == EV_MSC && input->code == MSC_SCAN) continue;
+    if (input->type != EV_KEY || process_intercepted_keys(&*input)) {
+      write_event(*input);
     }
   }
 }
