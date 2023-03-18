@@ -390,7 +390,11 @@ auto main(int argc, char** argv) -> int {
   auto intercepted_keys = initInterceptedKeys(read_mapping_or_default(argc, argv));
 
   auto process_intercepted_keys = [&](auto input) {
-    return std::ranges::all_of(intercepted_keys, [&](auto k){return k->process(input);});
+    auto processed = true;
+    for (auto key : intercepted_keys) {
+      processed &= key->process(input);
+    }
+    return processed;
   };
 
   while (auto input = read_event()) {
