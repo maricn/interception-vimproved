@@ -129,13 +129,11 @@ const auto DEFAULT_MAPPING = Mapping {
   // {KEY_SYSRQ, KEY_CONTEXT_MENU},
 };
 
+auto key_event(int value, KeyCode code, KeyCode type=EV_KEY) -> Event {
+  return {.time={.tv_sec=0, .tv_usec=0}, .type=type, .code=code, .value=value};
+}
 
-const auto SYN = Event {
-  .time = {.tv_sec = 0, .tv_usec = 0},
-  .type = EV_SYN,
-  .code = SYN_REPORT,
-  .value = KEY_STROKE_UP
-};
+const auto SYN = key_event(KEY_STROKE_UP, SYN_REPORT, EV_SYN);
 
 auto readEvent(Event *e) -> int {
   return std::fread(e, sizeof(Event), 1, stdin) == 1;
@@ -153,42 +151,13 @@ auto writeEvents(const std::vector<Event>& events) {
   }
 }
 
-// TODO: convert to a map cache to reduce amount of memory allocations
-auto buildEvent(int direction, KeyCode keycode) -> Event {
-  return {
-    .time = {.tv_sec = 0, .tv_usec = 0},
-    .type = EV_KEY,
-    .code = keycode,
-    .value = direction
-  };
+auto writeCombo(KeyCode code) {
+  writeEvents({key_event(KEY_STROKE_DOWN, code), SYN, key_event(KEY_STROKE_UP, code)});
 }
 
-auto buildEventUp(KeyCode keycode) -> Event {
-  return buildEvent(KEY_STROKE_UP, keycode);
-}
-
-auto writeCombo(KeyCode keycode) {
-  auto key_down = Event{
-    .time = {.tv_sec = 0, .tv_usec = 0},
-    .type = EV_KEY,
-    .code = keycode,
-    .value = KEY_STROKE_DOWN
-  };
-
-  auto key_up = Event{
-    .time = {.tv_sec = 0, .tv_usec = 0},
-    .type = EV_KEY,
-    .code = keycode,
-    .value = KEY_STROKE_UP
-  };
-
-  writeEvents({key_down, SYN, key_up});
-}
-
-// Intercepted key specification
 class InterceptedKey {
 public:
-  enum class State{START, INTERCEPTED_KEY_HELD, OTHER_KEY_HELD};
+  enum class State {START, INTERCEPTED_KEY_HELD, OTHER_KEY_HELD};
 
   InterceptedKey(KeyCode intercepted, KeyCode tapped)
     :_intercepted{intercepted}, _tapped{tapped} { }
@@ -301,7 +270,7 @@ protected:
         if (matches(input->code)) {
           auto held_keys_up = std::vector<Event>{};
           for (auto held_key_code : *_heldKeys) {
-            auto held_key_up = buildEventUp(mapping[held_key_code]);
+            auto held_key_up = key_event(KEY_STROKE_UP, mapping[held_key_code]);
             held_keys_up.push_back(held_key_up);
             held_keys_up.push_back(SYN);
           }
