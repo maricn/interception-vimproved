@@ -1,69 +1,42 @@
-#include <algorithm>
-#include <fstream>
 #include <ranges>
-#include <sstream>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
-#include <cstdlib>
-
-#include <filesystem>
 #include <linux/input.h>
-
 #include <yaml-cpp/yaml.h>
 
-auto log(const auto&... args) {
-  static auto logfile = std::ofstream {
-    "/tmp/log/interception-vimproved.log",
-    std::ios_base::app
-  };
-  logfile << "[LOG] ";
-  (logfile << ... << args) << std::endl;
-  logfile << std::flush;
-}
-
-class InterceptedKey;
-class InterceptedKeyModifier;
-class InterceptedKeyLayer;
-
+class Intercept;
 using Event = input_event;
-using KeyCode = unsigned short;
-using Mapping = std::unordered_map<KeyCode, KeyCode>;
-using Layers = std::vector<InterceptedKeyLayer>;
-using Modifiers = std::vector<InterceptedKeyModifier>;
-using Intercepts = std::vector<InterceptedKey*>;
-// NOTE: modifier keys must go first because layerKey.processInterceptedHeld
-// emits mapped key as soon as the for loop calls layerKey.process..
-// if that process is run before modifierKey.process, the modifier key will
-// not be emitted
-struct Configuration {Modifiers modifiers; Layers layers;};
+using Key = unsigned short;
+using Mapping = std::unordered_map<Key, Key>;
+using Intercepts = std::vector<Intercept*>;
 
 const auto KEY_STROKE_UP = 0;
 const auto KEY_STROKE_DOWN = 1;
 const auto KEY_STROKE_REPEAT = 2;
 
-const auto MODIFIERS = std::unordered_set<KeyCode> {
-  KEY_LEFTSHIFT, KEY_RIGHTSHIFT, KEY_LEFTCTRL, KEY_RIGHTCTRL,
-  KEY_LEFTALT, KEY_RIGHTALT, KEY_LEFTMETA, KEY_RIGHTMETA,
-  // TODO: handle capslock as not modifier?
-  KEY_CAPSLOCK,
-};
+auto is_keyup(Event input) -> bool { return input.value == KEY_STROKE_UP; }
+auto is_keydown(Event input) -> bool { return input.value == KEY_STROKE_DOWN; }
 
-auto is_modifier(int key) -> bool {
+auto is_modifier(Key key) -> bool {
+  // TODO: handle capslock as not modifier?
+  static const auto MODIFIERS = std::unordered_set<Key> {
+    KEY_LEFTSHIFT, KEY_RIGHTSHIFT, KEY_LEFTCTRL, KEY_RIGHTCTRL,
+    KEY_LEFTALT, KEY_RIGHTALT, KEY_LEFTMETA, KEY_RIGHTMETA, KEY_CAPSLOCK,
+  };
   return MODIFIERS.contains(key);
 }
 
 // auxilliary renamings for accessibility
-const auto KEY_BACKTICK = KEY_GRAVE;
 // in the real world, braces = `{`, `}`, brackets: `[`, `]`
+const auto KEY_BACKTICK = KEY_GRAVE;
 const auto KEY_LEFTBRACKET = KEY_LEFTBRACE;
 const auto KEY_RIGHTBRACKET = KEY_RIGHTBRACE;
-// print screen
 const auto KEY_PRT_SC = KEY_SYSRQ;
 
 // all mappable keys (for now)
 // see: github.com/torvalds/linux/blob/master/include/uapi/linux/input-event-codes.h
-const auto KEYS = std::unordered_map<std::string, KeyCode> {
+const auto KEYS = std::unordered_map<std::string, Key> {
 // KEY(KEY_K) preprocesses to {"KEY_K", KEY_K}
 #define KEY(KEYCODE) {#KEYCODE, KEYCODE}
 
@@ -98,58 +71,10 @@ const auto KEYS = std::unordered_map<std::string, KeyCode> {
   KEY(KEY_MUTE), KEY(KEY_VOLUMEDOWN), KEY(KEY_VOLUMEUP),
 
   KEY(KEY_PRT_SC), KEY(KEY_CONTEXT_MENU), KEY(KEY_PRINT),
-
 #undef KEY
 };
 
-const auto DEFAULT_MAPPING = Mapping {
-  // special chars
-  {KEY_E, KEY_ESC},
-  {KEY_D, KEY_DELETE},
-  {KEY_B, KEY_BACKSPACE},
-
-  // vim home row
-  {KEY_H, KEY_LEFT},
-  {KEY_J, KEY_DOWN},
-  {KEY_K, KEY_UP},
-  {KEY_L, KEY_RIGHT},
-
-  // vim above home row
-  {KEY_Y, KEY_HOME},
-  {KEY_U, KEY_PAGEDOWN},
-  {KEY_I, KEY_PAGEUP},
-  {KEY_O, KEY_END},
-
-  // number row to F keys
-  {KEY_1, KEY_F1},
-  {KEY_2, KEY_F2},
-  {KEY_3, KEY_F3},
-  {KEY_4, KEY_F4},
-  {KEY_5, KEY_F5},
-  {KEY_6, KEY_F6},
-  {KEY_7, KEY_F7},
-  {KEY_8, KEY_F8},
-  {KEY_9, KEY_F9},
-  {KEY_0, KEY_F10},
-  {KEY_MINUS, KEY_F11},
-  {KEY_EQUAL, KEY_F12},
-
-  // xf86 audio
-  {KEY_M, KEY_MUTE},
-  {KEY_COMMA, KEY_VOLUMEDOWN},
-  {KEY_DOT, KEY_VOLUMEUP},
-
-  // FIXME: these never did anything even in original src tree (thinkpad x1 yoga)
-  // mouse navigation
-  {BTN_LEFT, BTN_BACK},
-  {BTN_RIGHT, BTN_FORWARD},
-
-  // PrtSc -> Context Menu
-  // FIXME: this is not working, even though `wev` says keycode 99 is Print
-  // {KEY_SYSRQ, KEY_CONTEXT_MENU},
-};
-
-auto key_event(int value, KeyCode code, KeyCode type=EV_KEY) -> Event {
+auto key_event(int value, Key code, Key type=EV_KEY) -> Event {
   return {.time={.tv_sec=0, .tv_usec=0}, .type=type, .code=code, .value=value};
 }
 
@@ -174,91 +99,95 @@ auto write_events(const std::vector<Event>& events) {
   }
 }
 
-auto write_keytap(KeyCode code) {
+auto write_keytap(Key code) {
   write_events({key_event(KEY_STROKE_DOWN, code), SYNC, key_event(KEY_STROKE_UP, code)});
 }
 
-class InterceptedKey {
+class Intercept {
 public:
-  auto process(Event *input) -> bool {
+  auto process(Event input) -> bool {
     switch (state) {
-      case State::START: return processStart(input);
-      case State::INTERCEPTED_KEY_HELD: return processInterceptedHeld(input);
-      case State::OTHER_KEY_HELD: return processOtherKeyHeld(input);
+      case State::START: return process_start(input);
+      case State::INTERCEPT_KEY_HELD: return process_intercept_held(input);
+      case State::OTHER_KEY_HELD: return process_other_key_held(input);
       default: throw std::exception();
     }
   }
 
 protected:
-  InterceptedKey(KeyCode intercept, KeyCode tapped)
-      : intercept{intercept}, tapped{tapped}, state{State::START}, shouldEmitTapped{true} {}
+  Intercept(Key intercept, Key tap)
+      : intercept{intercept}, tap{tap}, state{State::START}, emit_tap{true} {}
 
-  enum class State {START, INTERCEPTED_KEY_HELD, OTHER_KEY_HELD};
+  enum class State {START, INTERCEPT_KEY_HELD, OTHER_KEY_HELD};
+  Key intercept;
+  Key tap;
+  State state;
+  bool emit_tap;
 
-  auto processStart(Event *input) -> bool {
-    if (is_intercept(input->code) && input->value == KEY_STROKE_DOWN) {
-      shouldEmitTapped = true;
-      state = State::INTERCEPTED_KEY_HELD;
+  auto is_intercept(Event input) -> bool { return input.code == intercept; }
+
+  auto process_start(Event input) -> bool {
+    if (is_intercept(input) && is_keydown(input)) {
+      emit_tap = true;
+      state = State::INTERCEPT_KEY_HELD;
       return false;
     }
     return true;
   };
 
-  auto is_intercept(KeyCode code) -> bool { return intercept == code; }
-
-  virtual auto processInterceptedHeld(Event* input) -> bool = 0;
-  virtual auto processOtherKeyHeld(Event* input) -> bool = 0;
-
-  KeyCode intercept;
-  KeyCode tapped;
-  State state;
-  bool shouldEmitTapped;
+  virtual auto process_intercept_held(Event input) -> bool = 0;
+  virtual auto process_other_key_held(Event input) -> bool = 0;
 };
 
-class InterceptedKeyLayer : public InterceptedKey {
+class Layer : public Intercept {
+public:
+  Layer(Key intercept, Key tap, Mapping mapping)
+      : Intercept{intercept, tap}, mapping{mapping} {}
+
 private:
   Mapping mapping;
-  std::unordered_set<KeyCode>* held_keys = new std::unordered_set<KeyCode>();
+  std::unordered_set<Key> held_keys;
 
-protected:
+  auto is_mapped(Event input) -> bool { return mapping.contains(input.code); }
+
+  auto is_held(Event input) -> bool { return held_keys.contains(input.code); }
+
   auto remapped(Event input) -> Event {
     input.code = mapping[input.code];
     return input;
   }
 
-  auto processInterceptedHeld(Event *input) -> bool override {
-    if (is_intercept(input->code) && input->value != KEY_STROKE_UP) {
-      return false; // don't emit anything
-    }
+  auto process_intercept_held(Event input) -> bool override {
+    // don't emit anything
+    if (is_intercept(input) && !is_keyup(input)) return false;
 
-    if (is_intercept(input->code)) { // && stroke up
+    if (is_intercept(input)) { // && stroke up
       // TODO: find a way to have a mouse click mark the key as intercepted
       // or just make it time based
-      // shouldEmitTapped &= mouse clicked || timeout;
+      // emit_tap &= mouse clicked || timeout;
 
-      if (shouldEmitTapped) {
-        write_keytap(tapped);
-        shouldEmitTapped = false;
+      if (emit_tap) {
+        write_keytap(tap);
+        emit_tap = false;
       }
 
       state = State::START;
       return false;
     }
 
-    if (input->value == KEY_STROKE_DOWN) {
+    if (is_keydown(input)) {
       // any other key
 
-      // NOTE: if we don't blindly set shouldEmitTapped to false on any
+      // NOTE: if we don't blindly set emit_tap to false on any
       // keypress, we can type faster because only in case of mapped key down,
       // the intercepted key will not be emitted - useful for scenario:
       // L_DOWN, SPACE_DOWN, A_DOWN, L_UP, A_UP, SPACE_UP
-      shouldEmitTapped &= !hasMapped(input->code) && !is_modifier(input->code);
+      emit_tap &= !is_mapped(input) && !is_modifier(input.code);
 
-      if (hasMapped(input->code)) {
-        held_keys->insert(input->code);
-        auto mapped = remapped(*input);
-        write_event(mapped);
-        state = InterceptedKey::State::OTHER_KEY_HELD;
+      if (is_mapped(input)) {
+        held_keys.insert(input.code);
+        write_event(remapped(input));
+        state = State::OTHER_KEY_HELD;
         return false;
       }
     }
@@ -266,117 +195,142 @@ protected:
     return true;
   }
 
-  auto processOtherKeyHeld(Event *input) -> bool override {
-    if (input->code == intercept && input->value != KEY_STROKE_UP) {
-      return false;
-    }
-    if (input->value == KEY_STROKE_DOWN
-        && held_keys->find(input->code) != held_keys->end()) {
-      return false;
-    }
+  auto process_other_key_held(Event input) -> bool override {
+    if (is_intercept(input) && !is_keyup(input)) return false;
+    if (is_keydown(input) && is_held(input)) return false;
 
-    auto shouldEmitInput = true;
-    if (input->value == KEY_STROKE_UP) {
+    auto emit_input = true;
+    if (is_keyup(input)) {
       // one of mapped held keys goes up
-      if (held_keys->find(input->code) != held_keys->end()) {
-        auto mapped = remapped(*input);
-        write_event(mapped);
-        held_keys->erase(input->code);
-        if (held_keys->empty()) {
-          state = InterceptedKey::State::INTERCEPTED_KEY_HELD;
+      if (is_held(input)) {
+        write_event(remapped(input));
+        held_keys.erase(input.code);
+        if (held_keys.empty()) {
+          state = State::INTERCEPT_KEY_HELD;
         }
-        shouldEmitInput = false;
+        emit_input = false;
       } else {
         // key that was not mapped & held goes up
-        if (is_intercept(input->code)) {
+        if (is_intercept(input)) {
           auto held_keys_up = std::vector<Event>{};
-          for (auto held_key_code : *held_keys) {
+          for (auto held_key_code : held_keys) {
             auto held_key_up = key_event(KEY_STROKE_UP, mapping[held_key_code]);
             held_keys_up.push_back(held_key_up);
             held_keys_up.push_back(SYNC);
           }
-
           write_events(held_keys_up);
-          held_keys->clear();
-          state = InterceptedKey::State::START;
-          shouldEmitInput = false;
+          held_keys.clear();
+          state = State::START;
+          emit_input = false;
         }
       }
-    } else { // KEY_STROKE_DOWN or KEY_STROKE_REPEAT
-      if (hasMapped(input->code)) {
-        auto mapped = remapped(*input);
-        write_event(mapped);
-        if (input->value == KEY_STROKE_DOWN) {
-          held_keys->insert(input->code);
+    } else {
+      if (is_mapped(input)) {
+        write_event(remapped(input));
+        if (is_keydown(input)) {
+          held_keys.insert(input.code);
         }
-        shouldEmitInput = false;
+        emit_input = false;
       }
     }
-    return shouldEmitInput;
+    return emit_input;
   }
-
-public:
-  InterceptedKeyLayer(KeyCode intercept, KeyCode tapped, Mapping mapping)
-      : InterceptedKey{intercept, tapped}, mapping{mapping} {}
-
-  auto hasMapped(KeyCode key) -> bool { return mapping.contains(key); }
 };
 
-class InterceptedKeyModifier : public InterceptedKey {
-protected:
-  KeyCode modifier;
-
-  bool processInterceptedHeld(Event *input) override {
-    if (is_intercept(input->code) && input->value != KEY_STROKE_UP) {
-      return false;
-    }
-
-    bool shouldEmitInput = true;
-    if (is_intercept(input->code)) { // && stroke up
-      if (shouldEmitTapped) {
-        write_keytap(tapped);
-      } else { // intercepted is mapped to modifier and key stroke up
-        Event modifier_up = *input;
-        modifier_up.code = modifier;
-        write_event(modifier_up);
-      }
-
-      state = State::START;
-      return false;
-    }
-
-    if (input->value == KEY_STROKE_DOWN) { // any other than intercepted
-      if (shouldEmitTapped) { // on first non-matching input after a
-                                     // matching input
-        auto modifier_down = new Event(*input);
-        modifier_down->code = modifier;
-
-        // for some reason, need to push "SYNC" after modifier here
-        write_events({*modifier_down, SYNC});
-
-        shouldEmitTapped = false;
-        return true; // gotta emit input event independently so we can process layer+modifier+input together
-      }
-    }
-
-    return shouldEmitInput;
-  }
-
-  auto processOtherKeyHeld([[maybe_unused]] Event *_) -> bool override { return true; }
-
+class Modifier : public Intercept {
 public:
-  InterceptedKeyModifier(KeyCode intercept, KeyCode tapped, KeyCode modifier)
-      : InterceptedKey{intercept, tapped}, modifier{modifier} {
+  Modifier(Key intercept, Key tap, Key modifier)
+      : Intercept{intercept, tap}, modifier{modifier} {
     if (!is_modifier(modifier)) {
       throw std::invalid_argument("Specified wrong modifier key");
     }
   }
+
+protected:
+  Key modifier;
+
+  auto process_intercept_held(Event input) -> bool override {
+    if (is_intercept(input) && !is_keyup(input)) return false;
+
+    bool emit_input = true;
+    if (is_intercept(input)) { // && stroke up
+      if (emit_tap) {
+        write_keytap(tap);
+      } else { // intercepted is mapped to modifier and key stroke up
+        input.code = modifier;
+        write_event(input);
+      }
+      state = State::START;
+      return false;
+    }
+    if (is_keydown(input)) {
+      // any other than intercepted
+      if (emit_tap) {
+        // on first non-matching input after a matching input
+        input.code = modifier;
+
+        // for some reason, need to push "SYNC" after modifier here
+        write_events({input, SYNC});
+
+        emit_tap = false;
+        return true; // gotta emit input event independently so we can process layer+modifier+input together
+      }
+    }
+    return emit_input;
+  }
+
+  auto process_other_key_held([[maybe_unused]] Event _) -> bool override { return true; }
 };
 
 auto default_config() -> Intercepts {
-  auto caps = new InterceptedKeyModifier(KEY_CAPSLOCK, KEY_ESC, KEY_LEFTCTRL);
-  auto enter = new InterceptedKeyModifier(KEY_ENTER, KEY_ENTER, KEY_RIGHTCTRL);
-  auto space = new InterceptedKeyLayer(KEY_SPACE, KEY_SPACE, DEFAULT_MAPPING);
+  auto caps = new Modifier(KEY_CAPSLOCK, KEY_ESC, KEY_LEFTCTRL);
+  auto enter = new Modifier(KEY_ENTER, KEY_ENTER, KEY_RIGHTCTRL);
+  auto space = new Layer(KEY_SPACE, KEY_SPACE, Mapping {
+    // special chars
+    {KEY_E, KEY_ESC},
+    {KEY_D, KEY_DELETE},
+    {KEY_B, KEY_BACKSPACE},
+
+    // vim home row
+    {KEY_H, KEY_LEFT},
+    {KEY_J, KEY_DOWN},
+    {KEY_K, KEY_UP},
+    {KEY_L, KEY_RIGHT},
+
+    // vim above home row
+    {KEY_Y, KEY_HOME},
+    {KEY_U, KEY_PAGEDOWN},
+    {KEY_I, KEY_PAGEUP},
+    {KEY_O, KEY_END},
+
+    // number row to F keys
+    {KEY_1, KEY_F1},
+    {KEY_2, KEY_F2},
+    {KEY_3, KEY_F3},
+    {KEY_4, KEY_F4},
+    {KEY_5, KEY_F5},
+    {KEY_6, KEY_F6},
+    {KEY_7, KEY_F7},
+    {KEY_8, KEY_F8},
+    {KEY_9, KEY_F9},
+    {KEY_0, KEY_F10},
+    {KEY_MINUS, KEY_F11},
+    {KEY_EQUAL, KEY_F12},
+
+    // xf86 audio
+    {KEY_M, KEY_MUTE},
+    {KEY_COMMA, KEY_VOLUMEDOWN},
+    {KEY_DOT, KEY_VOLUMEUP},
+
+    // FIXME: these never did anything even in original src tree (thinkpad x1 yoga)
+    // mouse navigation
+    {BTN_LEFT, BTN_BACK},
+    {BTN_RIGHT, BTN_FORWARD},
+
+    // PrtSc -> Context Menu
+    // FIXME: this is not working, even though `wev` says keycode 99 is Print
+    // {KEY_SYSRQ, KEY_CONTEXT_MENU},
+  });
   return Intercepts{caps, enter, space};
 }
 
@@ -386,91 +340,54 @@ auto read_config_or_default(int argc, char** argv) -> Intercepts {
     auto modifiers = Intercepts{};
     auto layers = Intercepts{};
 
-    auto yaml_str = [&](auto yaml_item){
+    auto read_key = [&](auto item){
       //TODO(WTF C++): "expected 'template' keyword before dependent template name"
       // | (this is not necessary in the yaml manual)
-      // `-------------vvvvvvvv
-      return yaml_item.template as<std::string>();
+      // `----------------vvvvvvvv
+      return KEYS.at(item.template as<std::string>());
     };
 
-    auto read_mapping = [&](auto yaml_mapping) {
+    auto read_mapping = [&](auto yaml) {
       auto mapping = Mapping{};
-      for (const auto& item : yaml_mapping) {
-        auto from = KEYS.at(yaml_str(item["from"]));
-        auto to = KEYS.at(yaml_str(item["to"]));
-        mapping[from] = to;
+      for (const auto& item : yaml) {
+        mapping[read_key(item["from"])] = read_key(item["to"]);
       }
       return mapping;
     };
 
-    auto read_intercept = [&](auto yaml_intercept) {
-      log("Reading intercept key...");
-      auto intercept = KEYS.at(yaml_str(yaml_intercept["intercept"]));
-      log("Read intercept key. key is: ", yaml_str(yaml_intercept["intercept"]));
+    auto read_intercept = [&](auto yaml) {
+      auto intercept = read_key(yaml["intercept"]);
+      auto ontap = yaml["ontap"] ? read_key(yaml["ontap"]) : intercept;
 
-      auto ontap = [&]{
-        log("Reading ontap key...");
-        if (auto ontap = yaml_intercept["ontap"]) {
-          log("Read ontap key. key is: ", yaml_str(ontap));
-          try {
-            return KEYS.at(yaml_str(ontap));
-          } catch (const std::exception& e) {
-            log("invalid key: ", yaml_str(ontap));
-            auto ss = std::ostringstream();
-            ss << "invalid key: " << yaml_str(ontap);
-            throw std::invalid_argument(ss.str());
-          }
-        }
-        log("Read ontap key. key is same as intercept: ", yaml_str(yaml_intercept["intercept"]));
-        return intercept;
-      }();
-
-      log("Reading onhold key...");
-      if (auto onhold = yaml_intercept["onhold"]) {
-        log("Read onhold entry.");
-        log("Dispatching on type of onhold entry...");
-        if (onhold.IsSequence()) {
-          log("onhold is a sequence. Reading Mapping...");
-          // a layer key
-          auto mapping = read_mapping(onhold);
-          log("Read mapping.");
-          layers.push_back(new InterceptedKeyLayer{intercept, ontap, mapping});
-          return;
-        }
-        else if (onhold.IsScalar()) {
-          // a modifier key
-          log("onhold is a scalar. Reading modifier...");
-          auto modifier = KEYS.at(yaml_str(onhold));
-          log("Read modifier. modifier is ", yaml_str(onhold));
-          modifiers.push_back(new InterceptedKeyModifier{intercept, ontap, modifier});
-          return;
-        }
-        else {
-          // we do not support other types
-          log("Invalid Configuration: only scalar or sequence types allowed.");
-          throw std::invalid_argument("Invalid Configuration");
-        }
-      } else {
-        // TODO: treat empty `onhold` as a simple remapping (like caps2esc)
-        log("Invalid Configuration: Empty onhold not implemented");
-        throw std::invalid_argument("Invalid Configuration: Empty onhold not implemented");
+      // TODO: treat empty `onhold` as a simple remapping (like caps2esc)
+      auto onhold = yaml["onhold"];
+      if (!onhold) throw std::invalid_argument(
+        "Invalid Configuration: onhold cannot be empty"
+      );
+      if (onhold.IsSequence()) {
+        layers.push_back(new Layer{intercept, ontap, read_mapping(onhold)});
+      }
+      else if (onhold.IsScalar()) {
+        modifiers.push_back(new Modifier{intercept, ontap, read_key(onhold)});
+      }
+      else {
+        throw std::invalid_argument(
+          "Invalid Configuration: onhold must be sequence or scalar"
+        );
       }
     };
 
-    log("Reading custom configuration...");
-    auto config = YAML::LoadFile(argv[1]);
-    log("Loaded yaml config.");
-    log("Reading intercepts...");
-    std::ranges::for_each(config, read_intercept);
-    log("Read intercepts.");
+    // NOTE: modifiers must go first because layer.process_intercept_held
+    // emits mapped key as soon as layer.process is called
+    // if layer.process is run before modifier.process, the modifier is not emitted
     auto intercepts = Intercepts{};
+    std::ranges::for_each(YAML::LoadFile(argv[1]), read_intercept);
     std::ranges::copy(modifiers, std::back_inserter(intercepts));
     std::ranges::copy(layers, std::back_inserter(intercepts));
     return intercepts;
-  } catch (const std::exception& e) {
-    log("[ERROR] ", e.what());
+  } catch (...) {
+    return default_config();
   }
-  return default_config();
 }
 
 class Interceptor {
@@ -496,7 +413,7 @@ private:
   auto processed(Event input) -> bool {
     auto processed = true;
     for (auto intercept : intercepts) {
-      processed &= intercept->process(&input);
+      processed &= intercept->process(input);
     }
     return processed;
   }
@@ -505,6 +422,5 @@ private:
 auto main(int argc, char** argv) -> int {
   std::setbuf(stdin, NULL);
   std::setbuf(stdout, NULL);
-  /* Interceptor(read_config_or_default(argc, argv)); */
   Interceptor(read_config_or_default(argc, argv)).event_loop();
 }
