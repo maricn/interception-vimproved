@@ -221,7 +221,7 @@ public:
   Modifier(Key intercept, Key tap, Key modifier)
       : Intercept{intercept, tap}, modifier{modifier} {}
 
-protected:
+private:
   Key modifier;
 
   using Intercept::remapped;
@@ -251,7 +251,7 @@ class Interceptor {
 public:
   Interceptor(Intercepts intercepts) : intercepts{intercepts} {}
 
-  auto event_loop() -> void {
+  auto event_loop() {
     while (auto input = read_event()) {
       intercept(*input);
     }
