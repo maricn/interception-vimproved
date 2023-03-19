@@ -138,6 +138,37 @@ protected:
   virtual auto process_other_key_held(Event) -> bool { return false; }
 };
 
+class Modifier : public Intercept {
+public:
+  Modifier(Key intercept, Key tap, Key modifier)
+      : Intercept{intercept, tap}, modifier{modifier} {}
+
+private:
+  Key modifier;
+
+  using Intercept::remapped;
+
+  auto process_intercept_held(Event input) -> bool override {
+    if (is_intercept(input)) {
+      if (!is_keyup(input)) return false;
+      if (emit_tap) {
+        write_keytap(tap);
+      } else {
+        write_events(remapped(input, modifier));
+      }
+      state = State::START;
+      return false;
+    }
+    if (is_keydown(input) && emit_tap) {
+      // on first non-matching input after a matching input
+      // for some reason, need to push "SYNC" after modifier here
+      write_events(remapped(input, modifier), SYNC);
+      emit_tap = false;
+    }
+    return true;
+  }
+};
+
 class Layer : public Intercept {
 public:
   Layer(Key intercept, Key tap, Mapping mapping)
@@ -213,37 +244,6 @@ private:
       }
     }
     return false;
-  }
-};
-
-class Modifier : public Intercept {
-public:
-  Modifier(Key intercept, Key tap, Key modifier)
-      : Intercept{intercept, tap}, modifier{modifier} {}
-
-private:
-  Key modifier;
-
-  using Intercept::remapped;
-
-  auto process_intercept_held(Event input) -> bool override {
-    if (is_intercept(input)) {
-      if (!is_keyup(input)) return false;
-      if (emit_tap) {
-        write_keytap(tap);
-      } else {
-        write_events(remapped(input, modifier));
-      }
-      state = State::START;
-      return false;
-    }
-    if (is_keydown(input) && emit_tap) {
-      // on first non-matching input after a matching input
-      // for some reason, need to push "SYNC" after modifier here
-      write_events(remapped(input, modifier), SYNC);
-      emit_tap = false;
-    }
-    return true;
   }
 };
 
