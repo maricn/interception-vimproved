@@ -1,6 +1,6 @@
 # Interception plugin for vimproved input
 
-My hideous (but working and performant) C++ code to remap the keys on any input device that emits keys.
+~My hideous~ Humble, performant key remapping C++ code that should work on Linux for any input device that emits keys.
 
 ## tl;dr;
 
@@ -68,7 +68,11 @@ sleep 1 && timeout 10 udevmon -c /etc/udevmon.yml
 - Other solutions I tried didn't behave as expected and produced unexpected artefacts.
 - In this solution, the use of sleeps is eliminated, there's no buffers for input and the interaction with output is minimized to reduce extra costs of writing to it often.
 
-## Related work
+## Acknowledgments
+
+Kudos to [@dceluis](https://github.com/dceluis) and [@exprpapi](https://github.com/exprpapi) for their contributions.
+
+### Related work / inspiration
 
 - [Interception Tools](https://gitlab.com/interception/linux/tools)
 - [space2meta](https://gitlab.com/interception/linux/plugins/space2meta)
