@@ -34,7 +34,7 @@ Use it with a job specification for `udevmon` (from [Interception Tools](https:/
 
 That matches any udev devices containing keyboard in the name (or my external TADA68 keyboard).
 
-Alternatively, you can run it with `udevmon` binary straight, just make sure to be negatively nice (`nice -n -20 udevmon -c /etc/udevmon.yml`) so your input is always available.
+Alternatively, you can run it with `udevmon` binary straight, just make sure to be negatively nice (`nice -n -20 udevmon -c /etc/interception-vimproved/config.yaml`) so your input is always available.
 
 ### Configuration
 If you want to customize the functionality, you can take a look at the [`config.yaml`](./config.yaml).
@@ -56,7 +56,7 @@ In case you want to edit the source code, kill the `udevmon` daemon, and manuall
 
 ```bash
 # sleep buys you some time to focus away from terminal to your playground, also you'll probably need to add a sudo
-sleep 1 && timeout 10 udevmon -c /etc/udevmon.yml
+sleep 1 && timeout 10 udevmon -c /etc/interception-vimproved/config.yaml
 ```
 
 ## Why make this
