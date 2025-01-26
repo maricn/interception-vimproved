@@ -11,8 +11,7 @@ CONFIG = config.yaml
 .PHONY: all
 all: build
 
-.PHONY: build
-build:
+build: build/interception-vimproved
 	meson build
 	ninja -C build
 
