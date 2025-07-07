@@ -11,8 +11,8 @@ CONFIG = config.yaml
 .PHONY: all
 all: build
 
-build: build/interception-vimproved
-	meson build
+build: 
+	meson setup build
 	ninja -C build
 
 .PHONY: install
